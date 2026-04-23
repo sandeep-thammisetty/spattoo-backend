@@ -1,8 +1,24 @@
 import { Router } from 'express';
 import { supabase } from '../services/supabase.js';
+import { getSignedReadUrl } from '../services/r2.js';
 import { requireAuth } from '../middleware/auth.js';
 
 const router = Router();
+
+router.get('/element-types', requireAuth, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('element_types')
+      .select('id, slug, name, placement_rules, sort_order')
+      .eq('is_active', true)
+      .order('sort_order');
+
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 router.get('/elements', requireAuth, async (req, res) => {
   try {
@@ -13,7 +29,15 @@ router.get('/elements', requireAuth, async (req, res) => {
       .order('sort_order');
 
     if (error) return res.status(500).json({ error: error.message });
-    res.json(data);
+
+    // Attach signed read URLs for R2 assets
+    const elements = await Promise.all(data.map(async (el) => ({
+      ...el,
+      image_url:     el.image_url     ? await getSignedReadUrl(el.image_url)     : null,
+      thumbnail_url: el.thumbnail_url ? await getSignedReadUrl(el.thumbnail_url) : null,
+    })));
+
+    res.json(elements);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -35,8 +59,8 @@ router.post('/admin/elements', requireAuth, async (req, res) => {
         element_type_id,
         allowed_zones,
         sort_order: sort_order ?? 0,
-        baker_id: null,
-        is_active: true,
+        baker_id:   null,
+        is_active:  true,
       })
       .select('id')
       .single();

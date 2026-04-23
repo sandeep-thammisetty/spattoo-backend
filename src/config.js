@@ -6,6 +6,10 @@ const required = [
   'OPENAI_API_KEY',
   'REMOVE_BG_API_KEY',
   'REDIS_URL',
+  'R2_ENDPOINT',
+  'R2_ACCESS_KEY_ID',
+  'R2_SECRET_ACCESS_KEY',
+  'R2_BUCKET',
 ];
 
 for (const key of required) {
@@ -20,5 +24,11 @@ export const config = {
   openai:   { apiKey: process.env.OPENAI_API_KEY },
   removeBg: { apiKey: process.env.REMOVE_BG_API_KEY },
   redis:    { url:    process.env.REDIS_URL },
+  r2: {
+    endpoint:        process.env.R2_ENDPOINT,
+    accessKeyId:     process.env.R2_ACCESS_KEY_ID,
+    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
+    bucket:          process.env.R2_BUCKET,
+  },
   port:     parseInt(process.env.PORT || '3000', 10),
 };

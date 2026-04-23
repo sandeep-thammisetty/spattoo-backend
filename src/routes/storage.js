@@ -5,8 +5,8 @@ import { requireAuth } from '../middleware/auth.js';
 const router = Router();
 
 const ALLOWED_FOLDERS = [
-  'elements/2D-images',
-  'elements/3D-images',
+  'elements/files/2D',
+  'elements/files/3D',
   'elements/thumbnails',
   'templates/files',
   'templates/thumbnails',

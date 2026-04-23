@@ -1,19 +1,20 @@
 import { Router } from 'express';
 import { supabase } from '../services/supabase.js';
 import { jobQueue } from '../jobs/queue.js';
+import { requireAuth } from '../middleware/auth.js';
 
 const router = Router();
 
-router.post('/jobs/extract', async (req, res) => {
+router.post('/jobs/extract', requireAuth, async (req, res) => {
   try {
-    const { imageUrl, bakerId } = req.body;
-    if (!imageUrl || !bakerId) {
-      return res.status(400).json({ error: 'imageUrl and bakerId are required' });
+    const { imageUrl } = req.body;
+    if (!imageUrl) {
+      return res.status(400).json({ error: 'imageUrl is required' });
     }
 
     const { data: job, error } = await supabase
       .from('jobs')
-      .insert({ type: 'extract_image', payload: { imageUrl }, baker_id: bakerId })
+      .insert({ type: 'extract_image', payload: { imageUrl }, baker_id: req.user.id })
       .select('id')
       .single();
 

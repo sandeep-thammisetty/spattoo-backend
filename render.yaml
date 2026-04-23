@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: spattoo-api
+    env: node
+    plan: starter
+    buildCommand: npm install
+    startCommand: node src/index.js
+    healthCheckPath: /health
+    envVarGroups:
+      - spattoo-shared
+    envVars:
+      - key: NODE_ENV
+        value: production
+
+envVarGroups:
+  - name: spattoo-shared
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: REMOVE_BG_API_KEY
+        sync: false
+      - key: REDIS_URL
+        sync: false

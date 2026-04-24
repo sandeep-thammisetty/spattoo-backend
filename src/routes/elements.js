@@ -1,9 +1,14 @@
 import { Router } from 'express';
 import { supabase } from '../services/supabase.js';
-import { getSignedReadUrl } from '../services/r2.js';
 import { requireAuth } from '../middleware/auth.js';
+import { config } from '../config.js';
 
 const router = Router();
+
+function toPublicUrl(key) {
+  if (!key) return null;
+  return `${config.r2.publicUrl}/${key}`;
+}
 
 router.get('/element-types', requireAuth, async (req, res) => {
   try {
@@ -22,20 +27,40 @@ router.get('/element-types', requireAuth, async (req, res) => {
 
 router.get('/elements', requireAuth, async (req, res) => {
   try {
-    const { data, error } = await supabase
+    const { element_type_id, parents_only } = req.query;
+
+    // Lightweight query for parent dropdowns — just id + name, no URLs needed
+    if (parents_only === 'true') {
+      let query = supabase
+        .from('cake_elements')
+        .select('id, name')
+        .eq('is_active', true)
+        .is('parent_id', null)
+        .order('name');
+
+      if (element_type_id) query = query.eq('element_type_id', element_type_id);
+
+      const { data, error } = await query;
+      if (error) return res.status(500).json({ error: error.message });
+      return res.json(data);
+    }
+
+    let query = supabase
       .from('cake_elements')
       .select('id, name, image_url, thumbnail_url, element_type_id, allowed_zones, sort_order, baker_id, parent_id')
       .eq('is_active', true)
       .order('sort_order');
 
+    if (element_type_id) query = query.eq('element_type_id', element_type_id);
+
+    const { data, error } = await query;
     if (error) return res.status(500).json({ error: error.message });
 
-    // Attach signed read URLs for R2 assets
-    const elements = await Promise.all(data.map(async (el) => ({
+    const elements = data.map(el => ({
       ...el,
-      image_url:     el.image_url     ? await getSignedReadUrl(el.image_url)     : null,
-      thumbnail_url: el.thumbnail_url ? await getSignedReadUrl(el.thumbnail_url) : null,
-    })));
+      image_url:     toPublicUrl(el.image_url),
+      thumbnail_url: toPublicUrl(el.thumbnail_url),
+    }));
 
     res.json(elements);
   } catch (err) {
@@ -45,7 +70,7 @@ router.get('/elements', requireAuth, async (req, res) => {
 
 router.post('/admin/elements', requireAuth, async (req, res) => {
   try {
-    const { name, image_url, thumbnail_url, element_type_id, allowed_zones, sort_order } = req.body;
+    const { name, image_url, thumbnail_url, element_type_id, parent_id, allowed_zones, sort_order } = req.body;
     if (!name || !element_type_id) {
       return res.status(400).json({ error: 'name and element_type_id are required' });
     }
@@ -57,6 +82,7 @@ router.post('/admin/elements', requireAuth, async (req, res) => {
         image_url,
         thumbnail_url,
         element_type_id,
+        parent_id:  parent_id ?? null,
         allowed_zones,
         sort_order: sort_order ?? 0,
         baker_id:   null,

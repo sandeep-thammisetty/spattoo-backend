@@ -13,10 +13,14 @@ router.post('/admin/bakers', requireAuth, async (req, res) => {
       primary_color, accent_color,
       subscription_tier, trial_ends_at,
       currency_code, timezone,
+      primaryUser,
     } = req.body;
 
-    if (!name || !slug || !email) {
-      return res.status(400).json({ error: 'name, slug, and email are required' });
+    if (!name || !slug) {
+      return res.status(400).json({ error: 'name and slug are required' });
+    }
+    if (!primaryUser?.first_name || !primaryUser?.last_name || !primaryUser?.email) {
+      return res.status(400).json({ error: 'primaryUser.first_name, last_name, and email are required' });
     }
 
     // Check slug uniqueness before creating the auth user
@@ -29,9 +33,10 @@ router.post('/admin/bakers', requireAuth, async (req, res) => {
 
     const tempPassword = randomBytes(6).toString('hex') + 'Aa1!';
 
+    // Auth account is created for the primary user, not the business contact
     const { data: authData, error: authError } = await supabase.auth.admin.createUser({
-      email,
-      password: tempPassword,
+      email:         primaryUser.email,
+      password:      tempPassword,
       email_confirm: true,
     });
     if (authError) return res.status(400).json({ error: authError.message });
@@ -42,7 +47,7 @@ router.post('/admin/bakers', requireAuth, async (req, res) => {
       .insert({
         name,
         slug,
-        email,
+        email: email || null,
         tagline:             tagline || null,
         instagram_handle:    instagram_handle || null,
         website_url:         website_url || null,
@@ -62,6 +67,28 @@ router.post('/admin/bakers', requireAuth, async (req, res) => {
     if (error) {
       await supabase.auth.admin.deleteUser(authData.user.id);
       return res.status(500).json({ error: error.message });
+    }
+
+    // Insert primary user into baker_appusers
+    const { error: userError } = await supabase
+      .from('baker_appusers')
+      .insert({
+        baker_id:        data.id,
+        first_name:      primaryUser.first_name,
+        last_name:       primaryUser.last_name,
+        email:           primaryUser.email,
+        phone:           primaryUser.phone || null,
+        whatsapp_number: primaryUser.whatsapp_number || null,
+        role:            'owner',
+        is_primary:      true,
+        auth_user_id:    authData.user.id,
+      });
+
+    if (userError) {
+      // Roll back: delete baker row and auth user
+      await supabase.from('bakers').delete().eq('id', data.id);
+      await supabase.auth.admin.deleteUser(authData.user.id);
+      return res.status(500).json({ error: userError.message });
     }
 
     res.status(201).json({ id: data.id, tempPassword });

@@ -14,7 +14,7 @@ router.get('/element-types', requireAuth, async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('element_types')
-      .select('id, slug, name, placement_rules, sort_order')
+      .select('id, slug, name, placement_rules, sort_order, default_allowed_actions')
       .eq('is_active', true)
       .order('sort_order');
 
@@ -29,20 +29,23 @@ router.get('/elements', requireAuth, async (req, res) => {
   try {
     const { element_type_id, parents_only } = req.query;
 
-    // Lightweight query for parent dropdowns — just id + name, no URLs needed
     if (parents_only === 'true') {
       let query = supabase
         .from('cake_elements')
-        .select('id, name')
+        .select('id, name, image_url, thumbnail_url, element_type_id, sort_order')
         .eq('is_active', true)
         .is('parent_id', null)
-        .order('name');
+        .order('sort_order');
 
       if (element_type_id) query = query.eq('element_type_id', element_type_id);
 
       const { data, error } = await query;
       if (error) return res.status(500).json({ error: error.message });
-      return res.json(data);
+      return res.json(data.map(el => ({
+        ...el,
+        image_url:     toPublicUrl(el.image_url),
+        thumbnail_url: toPublicUrl(el.thumbnail_url),
+      })));
     }
 
     let query = supabase

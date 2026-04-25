@@ -10,6 +10,7 @@ const ALLOWED_FOLDERS = [
   'elements/thumbnails',
   'templates/files',
   'templates/thumbnails',
+  'logos',
 ];
 
 router.post('/storage/sign-upload', requireAuth, async (req, res) => {

@@ -115,13 +115,13 @@ router.get('/baker/profile', requireAuth, async (req, res) => {
 
     const { data: baker } = await supabase
       .from('bakers')
-      .select('id, name, logo_url')
+      .select('id, name, logo_url, primary_color, accent_color')
       .eq('id', contact.baker_id)
       .single();
     if (!baker) return res.status(404).json({ error: 'Baker not found' });
 
     res.json({
-      baker: { id: baker.id, name: baker.name, logo_url: toPublicUrl(baker.logo_url) },
+      baker: { id: baker.id, name: baker.name, logo_url: toPublicUrl(baker.logo_url), primary_color: baker.primary_color, accent_color: baker.accent_color },
       user: { firstName: contact.first_name, lastName: contact.last_name, email: req.user.email },
     });
   } catch (err) {

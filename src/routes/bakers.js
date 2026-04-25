@@ -10,7 +10,7 @@ router.post('/admin/bakers', requireAuth, async (req, res) => {
     const {
       name, slug, email, tagline,
       instagram_handle, website_url,
-      primary_color, accent_color,
+      primary_color, accent_color, logo_url,
       subscription_tier, trial_ends_at,
       currency_code, timezone,
       primaryUser,
@@ -53,6 +53,7 @@ router.post('/admin/bakers', requireAuth, async (req, res) => {
         website_url:         website_url || null,
         primary_color:       primary_color || null,
         accent_color:        accent_color || null,
+        logo_url:            logo_url || null,
         subscription_tier:   tier,
         subscription_status: tier === 'trial' ? 'trial' : 'active',
         trial_ends_at:       trial_ends_at || null,

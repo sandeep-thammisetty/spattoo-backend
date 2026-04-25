@@ -2,6 +2,12 @@ import { Router } from 'express';
 import { randomBytes } from 'crypto';
 import { supabase } from '../services/supabase.js';
 import { requireAuth } from '../middleware/auth.js';
+import { config } from '../config.js';
+
+function toPublicUrl(key) {
+  if (!key) return null;
+  return `${config.r2.publicUrl}/${key}`;
+}
 
 const router = Router();
 
@@ -93,6 +99,31 @@ router.post('/admin/bakers', requireAuth, async (req, res) => {
     }
 
     res.status(201).json({ id: data.id, tempPassword });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/baker/profile', requireAuth, async (req, res) => {
+  try {
+    const { data: contact } = await supabase
+      .from('baker_appusers')
+      .select('first_name, last_name, baker_id')
+      .eq('auth_user_id', req.user.id)
+      .maybeSingle();
+    if (!contact) return res.status(404).json({ error: 'No baker account found' });
+
+    const { data: baker } = await supabase
+      .from('bakers')
+      .select('id, name, logo_url')
+      .eq('id', contact.baker_id)
+      .single();
+    if (!baker) return res.status(404).json({ error: 'Baker not found' });
+
+    res.json({
+      baker: { id: baker.id, name: baker.name, logo_url: toPublicUrl(baker.logo_url) },
+      user: { firstName: contact.first_name, lastName: contact.last_name, email: req.user.email },
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

@@ -1,8 +1,13 @@
 import { config } from '../config.js';
 
-export async function removeBackground(imageUrl) {
+// Accepts a URL string or a Buffer/Uint8Array of image bytes
+export async function removeBackground(imageInput) {
   const form = new FormData();
-  form.append('image_url', imageUrl);
+  if (typeof imageInput === 'string') {
+    form.append('image_url', imageInput);
+  } else {
+    form.append('image_file', new Blob([imageInput]), 'image.png');
+  }
   form.append('size', 'auto');
 
   const res = await fetch('https://api.remove.bg/v1.0/removebg', {
@@ -12,7 +17,5 @@ export async function removeBackground(imageUrl) {
   });
 
   if (!res.ok) throw new Error(`remove.bg failed: ${await res.text()}`);
-  const buffer = await res.arrayBuffer();
-  const base64 = Buffer.from(buffer).toString('base64');
-  return `data:image/png;base64,${base64}`;
+  return Buffer.from(await res.arrayBuffer());
 }

@@ -1,7 +1,9 @@
 import { Router } from 'express';
+import express from 'express';
 import { supabase } from '../services/supabase.js';
 import { requireAuth } from '../middleware/auth.js';
 import { config } from '../config.js';
+import { removeBackground } from '../services/removebg.js';
 
 const router = Router();
 
@@ -70,6 +72,22 @@ router.get('/elements', requireAuth, async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// Accepts raw image bytes, strips background, returns PNG bytes
+router.post(
+  '/admin/remove-bg',
+  requireAuth,
+  express.raw({ type: '*/*', limit: '10mb' }),
+  async (req, res) => {
+    try {
+      const pngBuffer = await removeBackground(req.body);
+      res.set('Content-Type', 'image/png');
+      res.send(pngBuffer);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  }
+);
 
 router.post('/admin/elements', requireAuth, async (req, res) => {
   try {

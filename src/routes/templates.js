@@ -111,4 +111,18 @@ router.patch('/admin/templates/:id', requireAuth, async (req, res) => {
   }
 });
 
+router.delete('/admin/templates/:id', requireAuth, async (req, res) => {
+  try {
+    const { error } = await supabase
+      .from('cake_templates')
+      .delete()
+      .eq('id', req.params.id);
+
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;

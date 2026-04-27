@@ -91,7 +91,7 @@ router.post(
 
 router.post('/admin/elements', requireAuth, async (req, res) => {
   try {
-    const { name, image_url, thumbnail_url, element_type_id, parent_id, allowed_zones, sort_order } = req.body;
+    const { name, image_url, thumbnail_url, element_type_id, parent_id, allowed_zones, default_color, sort_order } = req.body;
     if (!name || !element_type_id) {
       return res.status(400).json({ error: 'name and element_type_id are required' });
     }
@@ -103,11 +103,12 @@ router.post('/admin/elements', requireAuth, async (req, res) => {
         image_url,
         thumbnail_url,
         element_type_id,
-        parent_id:  parent_id ?? null,
+        parent_id:     parent_id ?? null,
         allowed_zones,
-        sort_order: sort_order ?? 0,
-        baker_id:   null,
-        is_active:  true,
+        default_color: default_color ?? null,
+        sort_order:    sort_order ?? 0,
+        baker_id:      null,
+        is_active:     true,
       })
       .select('id')
       .single();

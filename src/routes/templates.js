@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { supabase } from '../services/supabase.js';
-import { requireAuth } from '../middleware/auth.js';
+import { requireAuth, attachBakerContext } from '../middleware/auth.js';
 import { config } from '../config.js';
 
 const router = Router();
@@ -12,17 +12,29 @@ function toPublicUrl(key) {
 
 const TEMPLATE_FIELDS = 'id, name, shape, tier_count, type, offering, baker_id, parent_template_id, design, thumbnail_url, sort_order, is_active';
 
-router.get('/templates', requireAuth, async (req, res) => {
+router.get('/templates', requireAuth, attachBakerContext, async (req, res) => {
   try {
-    const { type, baker_id } = req.query;
+    const { type } = req.query;
+
     let query = supabase
       .from('cake_templates')
       .select(TEMPLATE_FIELDS)
       .eq('is_active', true)
       .order('sort_order');
 
-    if (type)     query = query.eq('type', type);
-    if (baker_id) query = query.eq('baker_id', baker_id);
+    if (type) query = query.eq('type', type);
+
+    if (req.bakerId) {
+      // Baker: global templates + their own
+      query = query.or(`baker_id.is.null,baker_id.eq.${req.bakerId}`);
+    } else {
+      // Admin: optionally scope to a baker's view via ?baker_id=X
+      const scopedId = req.query.baker_id;
+      if (scopedId) {
+        query = query.or(`baker_id.is.null,baker_id.eq.${scopedId}`);
+      }
+      // No baker_id param → admin sees all templates unfiltered
+    }
 
     const { data, error } = await query;
     if (error) return res.status(500).json({ error: error.message });

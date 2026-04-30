@@ -85,7 +85,7 @@ router.get('/elements', requireAuth, async (req, res) => {
     if (parents_only === 'true') {
       let query = supabase
         .from('cake_elements')
-        .select('id, name, image_url, thumbnail_url, element_type_id, allowed_zones, placement_config, sort_order')
+        .select('id, name, image_url, thumbnail_url, element_type_id, allowed_zones, placement_config, allowed_actions, sort_order')
         .eq('is_active', true)
         .is('parent_id', null)
         .order('sort_order');
@@ -103,7 +103,7 @@ router.get('/elements', requireAuth, async (req, res) => {
 
     let query = supabase
       .from('cake_elements')
-      .select('id, name, image_url, thumbnail_url, element_type_id, allowed_zones, placement_config, sort_order, baker_id, parent_id')
+      .select('id, name, image_url, thumbnail_url, element_type_id, allowed_zones, placement_config, allowed_actions, sort_order, baker_id, parent_id')
       .eq('is_active', true)
       .order('sort_order');
 
@@ -142,7 +142,7 @@ router.post(
 
 router.post('/admin/elements', requireAuth, async (req, res) => {
   try {
-    const { name, image_url, thumbnail_url, element_type_id, parent_id, allowed_zones, placement_config, default_color, sort_order } = req.body;
+    const { name, image_url, thumbnail_url, element_type_id, parent_id, allowed_zones, placement_config, allowed_actions, default_color, sort_order } = req.body;
     if (!name || !element_type_id) {
       return res.status(400).json({ error: 'name and element_type_id are required' });
     }
@@ -157,6 +157,7 @@ router.post('/admin/elements', requireAuth, async (req, res) => {
         parent_id:        parent_id ?? null,
         allowed_zones,
         placement_config: placement_config ?? {},
+        allowed_actions:  allowed_actions  ?? { resize: true, color: false, delete: true },
         default_color:    default_color ?? null,
         sort_order:       sort_order ?? 0,
         baker_id:         null,

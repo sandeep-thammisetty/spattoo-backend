@@ -85,7 +85,7 @@ router.get('/elements', requireAuth, async (req, res) => {
     if (parents_only === 'true') {
       let query = supabase
         .from('cake_elements')
-        .select('id, name, image_url, thumbnail_url, element_type_id, sort_order')
+        .select('id, name, image_url, thumbnail_url, element_type_id, allowed_zones, placement_config, sort_order')
         .eq('is_active', true)
         .is('parent_id', null)
         .order('sort_order');

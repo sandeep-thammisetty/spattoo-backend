@@ -27,6 +27,57 @@ router.get('/element-types', requireAuth, async (req, res) => {
   }
 });
 
+router.get('/admin/element-types', requireAuth, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('element_types')
+      .select('id, slug, name, placement_rules, sort_order, is_active')
+      .order('sort_order');
+
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/admin/element-types', requireAuth, async (req, res) => {
+  try {
+    const { name, slug, placement_rules, sort_order } = req.body;
+    if (!name || !slug) return res.status(400).json({ error: 'name and slug are required' });
+
+    const { data, error } = await supabase
+      .from('element_types')
+      .insert({ name, slug, placement_rules: placement_rules ?? {}, sort_order: sort_order ?? 0, is_active: true })
+      .select('id, slug, name, placement_rules, sort_order, is_active')
+      .single();
+
+    if (error) return res.status(500).json({ error: error.message });
+    res.status(201).json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.patch('/admin/element-types/:id', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, slug, placement_rules, sort_order, is_active } = req.body;
+
+    const { data, error } = await supabase
+      .from('element_types')
+      .update({ ...(name != null && { name }), ...(slug != null && { slug }), ...(placement_rules != null && { placement_rules }), ...(sort_order != null && { sort_order }), ...(is_active != null && { is_active }) })
+      .eq('id', id)
+      .select('id, slug, name, placement_rules, sort_order, is_active')
+      .single();
+
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get('/elements', requireAuth, async (req, res) => {
   try {
     const { element_type_id, parents_only } = req.query;

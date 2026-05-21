@@ -6,7 +6,6 @@ import elementsRouter from './routes/elements.js';
 import templatesRouter from './routes/templates.js';
 import storageRouter from './routes/storage.js';
 import bakersRouter from './routes/bakers.js';
-
 const app = express();
 
 app.use(cors());

@@ -140,6 +140,57 @@ router.post(
   }
 );
 
+router.get('/admin/elements', requireAuth, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('cake_elements')
+      .select('id, name, image_url, thumbnail_url, element_type_id, parent_id, allowed_zones, placement_config, allowed_actions, default_color, sort_order, is_active, baker_id')
+      .is('baker_id', null)
+      .order('sort_order');
+
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data.map(el => ({
+      ...el,
+      image_url:     toPublicUrl(el.image_url),
+      thumbnail_url: toPublicUrl(el.thumbnail_url),
+    })));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.patch('/admin/elements/:id', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, image_url, thumbnail_url, element_type_id, parent_id, allowed_zones, placement_config, allowed_actions, default_color, sort_order, is_active } = req.body;
+
+    const updates = {};
+    if (name            != null)      updates.name             = name;
+    if (image_url       !== undefined) updates.image_url        = image_url;
+    if (thumbnail_url   !== undefined) updates.thumbnail_url    = thumbnail_url;
+    if (element_type_id != null)      updates.element_type_id  = element_type_id;
+    if (parent_id       !== undefined) updates.parent_id        = parent_id;
+    if (allowed_zones   != null)      updates.allowed_zones    = allowed_zones;
+    if (placement_config!= null)      updates.placement_config = placement_config;
+    if (allowed_actions != null)      updates.allowed_actions  = allowed_actions;
+    if (default_color   !== undefined) updates.default_color    = default_color;
+    if (sort_order      != null)      updates.sort_order       = sort_order;
+    if (is_active       != null)      updates.is_active        = is_active;
+
+    const { data, error } = await supabase
+      .from('cake_elements')
+      .update(updates)
+      .eq('id', id)
+      .select('id')
+      .single();
+
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.post('/admin/elements', requireAuth, async (req, res) => {
   try {
     const { name, image_url, thumbnail_url, element_type_id, parent_id, allowed_zones, placement_config, allowed_actions, default_color, sort_order } = req.body;

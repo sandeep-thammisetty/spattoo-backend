@@ -1,0 +1,250 @@
+import { Router } from 'express';
+import { randomUUID } from 'crypto';
+import { supabase } from '../services/supabase.js';
+import { putObject } from '../services/r2.js';
+
+const router = Router();
+
+// ── POST /api/orders ──────────────────────────────────────────────────────────
+// Public endpoint — no auth required. Called by the customer-facing designer.
+//
+// Body:
+//   bakerSlug            string   required
+//   customer             object   required  { email, firstName, lastName, phone? }
+//   designSnapshot       object   required  full design JSON
+//   designThumbnail      string?  base64 PNG data URL (e.g. "data:image/png;base64,...")
+//   weightKg             number?
+//   flavours             array?   [{ tier: 0, flavour: "vanilla" }, ...]
+//   specialInstructions  string?
+//   deliveryDate         string?  ISO date  "2026-06-15"
+//   deliveryTime         string?  "14:30"
+//   deliveryMode         string   "pickup" | "home_delivery"  (default: "pickup")
+//   deliveryAddress      string?  required when deliveryMode = "home_delivery"
+
+router.post('/orders', async (req, res) => {
+  try {
+    const {
+      bakerSlug,
+      customer,
+      designSnapshot,
+      designThumbnail,
+      weightKg,
+      flavours,
+      specialInstructions,
+      deliveryDate,
+      deliveryTime,
+      deliveryMode = 'pickup',
+      deliveryAddress,
+    } = req.body;
+
+    // ── Validate required fields ────────────────────────────────────────────
+    if (!bakerSlug)                         return res.status(400).json({ error: 'bakerSlug is required' });
+    if (!customer?.email)                   return res.status(400).json({ error: 'customer.email is required' });
+    if (!customer?.firstName)               return res.status(400).json({ error: 'customer.firstName is required' });
+    if (!designSnapshot)                    return res.status(400).json({ error: 'designSnapshot is required' });
+    if (!['pickup', 'home_delivery'].includes(deliveryMode)) {
+      return res.status(400).json({ error: 'deliveryMode must be pickup or home_delivery' });
+    }
+    if (deliveryMode === 'home_delivery' && !deliveryAddress) {
+      return res.status(400).json({ error: 'deliveryAddress is required for home_delivery' });
+    }
+
+    // ── Resolve baker ───────────────────────────────────────────────────────
+    const { data: baker, error: bakerError } = await supabase
+      .from('bakers')
+      .select('id')
+      .eq('slug', bakerSlug)
+      .eq('is_active', true)
+      .maybeSingle();
+
+    if (bakerError) return res.status(500).json({ error: bakerError.message });
+    if (!baker)     return res.status(404).json({ error: 'Baker not found' });
+
+    const bakerId = baker.id;
+
+    // ── Upsert customer ─────────────────────────────────────────────────────
+    // Find existing customer for this baker or create a new one.
+    let { data: existingCustomer } = await supabase
+      .from('customers')
+      .select('id')
+      .eq('baker_id', bakerId)
+      .eq('email', customer.email.toLowerCase().trim())
+      .maybeSingle();
+
+    if (!existingCustomer) {
+      const { data: newCustomer, error: customerError } = await supabase
+        .from('customers')
+        .insert({
+          baker_id:   bakerId,
+          email:      customer.email.toLowerCase().trim(),
+          first_name: customer.firstName,
+          last_name:  customer.lastName ?? null,
+          phone:      customer.phone ?? null,
+          source:     'online_order',
+        })
+        .select('id')
+        .single();
+
+      if (customerError) return res.status(500).json({ error: customerError.message });
+      existingCustomer = newCustomer;
+    }
+
+    // ── Upload thumbnail to R2 ──────────────────────────────────────────────
+    let thumbnailUrl = null;
+    if (designThumbnail) {
+      const base64Data = designThumbnail.replace(/^data:image\/png;base64,/, '');
+      const buffer     = Buffer.from(base64Data, 'base64');
+      const key        = `orders/thumbnails/${randomUUID()}.png`;
+      thumbnailUrl     = await putObject(key, buffer, 'image/png');
+    }
+
+    // ── Insert order ────────────────────────────────────────────────────────
+    const { data: order, error: orderError } = await supabase
+      .from('orders')
+      .insert({
+        baker_id:             bakerId,
+        customer_id:          existingCustomer.id,
+        design_snapshot:      designSnapshot,
+        design_thumbnail_url: thumbnailUrl,
+        weight_kg:            weightKg ?? null,
+        flavours:             flavours ?? null,
+        special_instructions: specialInstructions ?? null,
+        delivery_date:        deliveryDate ?? null,
+        delivery_time:        deliveryTime ?? null,
+        delivery_mode:        deliveryMode,
+        delivery_address:     deliveryAddress ?? null,
+        status:               'pending',
+      })
+      .select('id, created_at')
+      .single();
+
+    if (orderError) return res.status(500).json({ error: orderError.message });
+
+    res.status(201).json({
+      orderId:   order.id,
+      createdAt: order.created_at,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── GET /api/orders ───────────────────────────────────────────────────────────
+// Baker-facing: list orders for the authenticated baker's account.
+// Query params: status, from, to (ISO dates)
+
+import { requireAuth } from '../middleware/auth.js';
+
+router.get('/orders', requireAuth, async (req, res) => {
+  try {
+    const { data: appUser } = await supabase
+      .from('baker_appusers')
+      .select('baker_id')
+      .eq('auth_user_id', req.user.id)
+      .maybeSingle();
+
+    if (!appUser) return res.status(403).json({ error: 'Not a baker account' });
+
+    const { status, from, to } = req.query;
+
+    let query = supabase
+      .from('orders')
+      .select(`
+        id, status, weight_kg, delivery_date, delivery_time,
+        delivery_mode, delivery_address, flavours,
+        special_instructions, design_thumbnail_url,
+        approved_at, created_at, updated_at,
+        customers ( id, email, first_name, last_name, phone )
+      `)
+      .eq('baker_id', appUser.baker_id)
+      .order('created_at', { ascending: false });
+
+    if (status) query = query.eq('status', status);
+    if (from)   query = query.gte('created_at', from);
+    if (to)     query = query.lte('created_at', to);
+
+    const { data, error } = await query;
+    if (error) return res.status(500).json({ error: error.message });
+
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── GET /api/orders/:id ───────────────────────────────────────────────────────
+// Returns full order including design_snapshot (for reconstructing the cake).
+
+router.get('/orders/:id', requireAuth, async (req, res) => {
+  try {
+    const { data: appUser } = await supabase
+      .from('baker_appusers')
+      .select('baker_id')
+      .eq('auth_user_id', req.user.id)
+      .maybeSingle();
+
+    if (!appUser) return res.status(403).json({ error: 'Not a baker account' });
+
+    const { data: order, error } = await supabase
+      .from('orders')
+      .select(`
+        *,
+        customers ( id, email, first_name, last_name, phone )
+      `)
+      .eq('id', req.params.id)
+      .eq('baker_id', appUser.baker_id)
+      .maybeSingle();
+
+    if (error)  return res.status(500).json({ error: error.message });
+    if (!order) return res.status(404).json({ error: 'Order not found' });
+
+    res.json(order);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── PATCH /api/orders/:id/status ──────────────────────────────────────────────
+// Baker approves, moves to in_progress, marks ready, etc.
+
+const VALID_STATUSES = ['pending', 'approved', 'in_progress', 'ready', 'delivered', 'cancelled'];
+
+router.patch('/orders/:id/status', requireAuth, async (req, res) => {
+  try {
+    const { status } = req.body;
+    if (!VALID_STATUSES.includes(status)) {
+      return res.status(400).json({ error: `status must be one of: ${VALID_STATUSES.join(', ')}` });
+    }
+
+    const { data: appUser } = await supabase
+      .from('baker_appusers')
+      .select('baker_id, id')
+      .eq('auth_user_id', req.user.id)
+      .maybeSingle();
+
+    if (!appUser) return res.status(403).json({ error: 'Not a baker account' });
+
+    const updates = { status };
+    if (status === 'approved') {
+      updates.approved_at = new Date().toISOString();
+      updates.approved_by = appUser.id;
+    }
+
+    const { data: order, error } = await supabase
+      .from('orders')
+      .update(updates)
+      .eq('id', req.params.id)
+      .eq('baker_id', appUser.baker_id)
+      .select('id, status, approved_at')
+      .maybeSingle();
+
+    if (error)  return res.status(500).json({ error: error.message });
+    if (!order) return res.status(404).json({ error: 'Order not found' });
+
+    res.json(order);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+export default router;

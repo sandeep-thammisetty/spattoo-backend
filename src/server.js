@@ -6,6 +6,7 @@ import elementsRouter from './routes/elements.js';
 import templatesRouter from './routes/templates.js';
 import storageRouter from './routes/storage.js';
 import bakersRouter from './routes/bakers.js';
+import ordersRouter from './routes/orders.js';
 const app = express();
 
 app.use(cors());
@@ -17,5 +18,6 @@ app.use('/api', elementsRouter);
 app.use('/api', templatesRouter);
 app.use('/api', storageRouter);
 app.use('/api', bakersRouter);
+app.use('/api', ordersRouter);
 
 export default app;

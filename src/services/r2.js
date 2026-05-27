@@ -21,6 +21,18 @@ export async function getSignedUploadUrl(key, contentType) {
   return getSignedUrl(r2, command, { expiresIn: 3600 });
 }
 
+// Uploads a Buffer directly from the server (no signed URL round-trip)
+export async function putObject(key, buffer, contentType) {
+  const command = new PutObjectCommand({
+    Bucket:      config.r2.bucket,
+    Key:         key,
+    Body:        buffer,
+    ContentType: contentType,
+  });
+  await r2.send(command);
+  return `${config.r2.publicUrl}/${key}`;
+}
+
 // Returns a signed URL to read a file (expires in 1 hour)
 export async function getSignedReadUrl(key) {
   const command = new GetObjectCommand({

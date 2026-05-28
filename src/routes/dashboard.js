@@ -20,7 +20,6 @@ router.get('/baker/dashboard', requireAuth, async (req, res) => {
     const in7Days    = new Date(now.getTime() + 7 * 86400000).toISOString().slice(0, 10);
     const ago7Days   = new Date(now.getTime() - 7  * 86400000).toISOString();
     const ago14Days  = new Date(now.getTime() - 14 * 86400000).toISOString();
-    const ago2Days   = new Date(now.getTime() - 2  * 86400000).toISOString();
     const ago90Days  = new Date(now.getTime() - 90 * 86400000).toISOString();
 
     // Run all queries in parallel
@@ -60,12 +59,13 @@ router.get('/baker/dashboard', requireAuth, async (req, res) => {
       supabase.from('orders').select('created_at')
         .eq('baker_id', baker_id).gte('created_at', ago14Days),
 
-      // Needs attention: pending > 2 days old
+      // Needs attention: due today or tomorrow, not yet ready/delivered/cancelled
       supabase.from('orders')
-        .select('id, created_at, customers(first_name, last_name)')
-        .eq('baker_id', baker_id).eq('status', 'pending')
-        .lt('created_at', ago2Days)
-        .order('created_at'),
+        .select('id, delivery_date, delivery_time, delivery_mode, status, customers(first_name, last_name)')
+        .eq('baker_id', baker_id)
+        .in('delivery_date', [today, tomorrow])
+        .not('status', 'in', '(ready,delivered,cancelled)')
+        .order('delivery_date').order('delivery_time'),
 
       // Upcoming deliveries next 7 days
       supabase.from('orders')

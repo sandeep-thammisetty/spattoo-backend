@@ -182,33 +182,6 @@ router.post('/orders', async (req, res) => {
   }
 });
 
-// ── GET /api/baker/customers ──────────────────────────────────────────────────
-// Returns customers for the authenticated baker. Optional ?q= for phone/name search.
-
-router.get('/baker/customers', requireAuth, async (req, res) => {
-  try {
-    const { data: appUser } = await supabase
-      .from('baker_appusers')
-      .select('baker_id')
-      .eq('auth_user_id', req.user.id)
-      .maybeSingle();
-
-    if (!appUser) return res.status(403).json({ error: 'Not a baker account' });
-
-    let query = supabase
-      .from('customers')
-      .select('id, first_name, last_name, email, phone, created_at')
-      .eq('baker_id', appUser.baker_id)
-      .order('first_name');
-
-    const { data, error } = await query;
-    if (error) return res.status(500).json({ error: error.message });
-
-    res.json(data);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
 
 // ── GET /api/orders ───────────────────────────────────────────────────────────
 // Baker-facing: list orders for the authenticated baker's account.

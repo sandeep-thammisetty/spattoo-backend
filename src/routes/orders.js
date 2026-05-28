@@ -369,13 +369,15 @@ router.patch('/orders/:id', requireAuth, async (req, res) => {
     const { data: order, error } = await supabase
       .from('orders').update(updates).eq('id', req.params.id).eq('baker_id', appUser.baker_id)
       .select('id, ' + EDITABLE_FIELDS.join(', ')).maybeSingle();
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return res.status(500).json({ error: `Update failed: ${error.message}` });
+    if (!order) return res.status(404).json({ error: 'Order not found after update' });
 
-    await supabase.from('order_audit_log').insert({
+    const { error: auditError } = await supabase.from('order_audit_log').insert({
       order_id: req.params.id, baker_id: appUser.baker_id,
       event: 'edited', comment: comment.trim(), changes,
       changed_by_name: `${appUser.first_name ?? ''} ${appUser.last_name ?? ''}`.trim() || req.user.email,
     });
+    if (auditError) console.error('Audit log insert failed:', auditError.message);
 
     res.json(order);
   } catch (err) {

@@ -84,11 +84,12 @@ router.get('/baker/dashboard', requireAuth, async (req, res) => {
         .eq('baker_id', baker_id).gte('created_at', ago90Days)
         .not('flavours', 'is', null),
 
-      // Orders with customer join for top customers
-      supabase.from('orders')
-        .select('customer_id, customers(first_name, last_name)')
+      // New customers in last 7 days
+      supabase.from('customers')
+        .select('id, first_name, last_name, phone, email, created_at')
         .eq('baker_id', baker_id)
-        .not('status', 'eq', 'cancelled'),
+        .gte('created_at', ago7Days)
+        .order('created_at', { ascending: false }),
     ]);
 
     // ── Orders per day (last 14 days) ────────────────────────────────────────
@@ -129,19 +130,13 @@ router.get('/baker/dashboard', requireAuth, async (req, res) => {
       .sort((a, b) => b.count - a.count)
       .slice(0, 6);
 
-    // ── Top customers ────────────────────────────────────────────────────────
-    const custMap = {};
-    (customerOrders.data ?? []).forEach(o => {
-      if (!o.customer_id) return;
-      const name = o.customers
-        ? `${o.customers.first_name ?? ''} ${o.customers.last_name ?? ''}`.trim()
-        : 'Unknown';
-      if (!custMap[o.customer_id]) custMap[o.customer_id] = { name, count: 0 };
-      custMap[o.customer_id].count++;
-    });
-    const topCustomers = Object.values(custMap)
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 5);
+    const newCustomers = (customerOrders.data ?? []).map(c => ({
+      id:         c.id,
+      name:       `${c.first_name ?? ''} ${c.last_name ?? ''}`.trim(),
+      phone:      c.phone ?? null,
+      email:      c.email ?? null,
+      created_at: c.created_at,
+    }));
 
     res.json({
       stats: {
@@ -157,7 +152,7 @@ router.get('/baker/dashboard', requireAuth, async (req, res) => {
       statusBreakdown,
       deliverySplit: { pickup: pickupCount, homeDelivery: deliveryCount },
       topFlavours,
-      topCustomers,
+      newCustomers,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

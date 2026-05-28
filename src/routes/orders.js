@@ -39,8 +39,8 @@ router.post('/orders', async (req, res) => {
 
     // ── Validate required fields ────────────────────────────────────────────
     if (!bakerSlug)                         return res.status(400).json({ error: 'bakerSlug is required' });
-    if (!customer?.email)                   return res.status(400).json({ error: 'customer.email is required' });
     if (!customer?.firstName)               return res.status(400).json({ error: 'customer.firstName is required' });
+    if (!customer?.phone && !customer?.email) return res.status(400).json({ error: 'customer.phone or customer.email is required' });
     if (!designSnapshot)                    return res.status(400).json({ error: 'designSnapshot is required' });
     if (!['pickup', 'home_delivery'].includes(deliveryMode)) {
       return res.status(400).json({ error: 'deliveryMode must be pickup or home_delivery' });
@@ -63,23 +63,28 @@ router.post('/orders', async (req, res) => {
     const bakerId = baker.id;
 
     // ── Upsert customer ─────────────────────────────────────────────────────
-    // Find existing customer for this baker or create a new one.
-    let { data: existingCustomer } = await supabase
-      .from('customers')
-      .select('id')
-      .eq('baker_id', bakerId)
-      .eq('email', customer.email.toLowerCase().trim())
-      .maybeSingle();
+    // Look up by email if provided, otherwise by phone.
+    const emailNorm = customer.email?.toLowerCase().trim() || null;
+    const phoneNorm = customer.phone?.trim() || null;
+
+    let lookupQuery = supabase.from('customers').select('id').eq('baker_id', bakerId);
+    if (emailNorm) {
+      lookupQuery = lookupQuery.eq('email', emailNorm);
+    } else {
+      lookupQuery = lookupQuery.eq('phone', phoneNorm);
+    }
+
+    let { data: existingCustomer } = await lookupQuery.maybeSingle();
 
     if (!existingCustomer) {
       const { data: newCustomer, error: customerError } = await supabase
         .from('customers')
         .insert({
           baker_id:   bakerId,
-          email:      customer.email.toLowerCase().trim(),
+          email:      emailNorm,
           first_name: customer.firstName,
           last_name:  customer.lastName ?? null,
-          phone:      customer.phone ?? null,
+          phone:      phoneNorm,
           source:     'online_order',
         })
         .select('id')
@@ -124,6 +129,34 @@ router.post('/orders', async (req, res) => {
       orderId:   order.id,
       createdAt: order.created_at,
     });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── GET /api/baker/customers ──────────────────────────────────────────────────
+// Returns customers for the authenticated baker. Optional ?q= for phone/name search.
+
+router.get('/baker/customers', requireAuth, async (req, res) => {
+  try {
+    const { data: appUser } = await supabase
+      .from('baker_appusers')
+      .select('baker_id')
+      .eq('auth_user_id', req.user.id)
+      .maybeSingle();
+
+    if (!appUser) return res.status(403).json({ error: 'Not a baker account' });
+
+    let query = supabase
+      .from('customers')
+      .select('id, first_name, last_name, email, phone, created_at')
+      .eq('baker_id', appUser.baker_id)
+      .order('first_name');
+
+    const { data, error } = await query;
+    if (error) return res.status(500).json({ error: error.message });
+
+    res.json(data);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

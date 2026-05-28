@@ -343,12 +343,23 @@ router.patch('/orders/:id', requireAuth, async (req, res) => {
       .eq('id', req.params.id).eq('baker_id', appUser.baker_id).maybeSingle();
     if (!existing) return res.status(404).json({ error: 'Order not found' });
 
+    // Sanitize: empty strings → null; weight_kg → number or null
+    function sanitize(field, val) {
+      if (val === '' || val === undefined) return null;
+      if (field === 'weight_kg') return val === null ? null : parseFloat(val);
+      return val;
+    }
+
     const updates = {};
     const changes = {};
     for (const f of EDITABLE_FIELDS) {
-      if (f in fields && fields[f] !== existing[f]) {
-        updates[f] = fields[f];
-        changes[f] = { from: existing[f], to: fields[f] };
+      if (!(f in fields)) continue;
+      const sanitized = sanitize(f, fields[f]);
+      const existing_val = existing[f] ?? null;
+      // Compare as strings to avoid type mismatch (e.g. 2 vs "2")
+      if (String(sanitized ?? '') !== String(existing_val ?? '')) {
+        updates[f] = sanitized;
+        changes[f] = { from: existing_val, to: sanitized };
       }
     }
 

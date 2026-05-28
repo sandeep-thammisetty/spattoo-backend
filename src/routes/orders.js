@@ -231,7 +231,7 @@ router.get('/orders', requireAuth, async (req, res) => {
       .select(`
         id, status, weight_kg, delivery_date, delivery_time,
         delivery_mode, delivery_address, flavours,
-        special_instructions, design_thumbnail_url,
+        special_instructions, design_thumbnail_url, design_snapshot,
         approved_at, created_at, updated_at,
         customers ( id, email, first_name, last_name, phone )
       `)

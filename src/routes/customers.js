@@ -22,7 +22,8 @@ router.get('/baker/customers', requireAuth, async (req, res) => {
     if (!bakerId) return res.status(403).json({ error: 'Not a baker account' });
 
     const includeInactive = req.query.include_inactive === 'true';
-    const q = req.query.q?.trim().toLowerCase();
+    const q    = req.query.q?.trim().toLowerCase();
+    const from = req.query.from;
 
     let query = supabase
       .from('customers')
@@ -31,6 +32,7 @@ router.get('/baker/customers', requireAuth, async (req, res) => {
       .order('first_name');
 
     if (!includeInactive) query = query.eq('is_active', true);
+    if (from)             query = query.gte('created_at', from);
 
     const { data, error } = await query;
     if (error) return res.status(500).json({ error: error.message });

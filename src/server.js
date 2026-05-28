@@ -7,6 +7,7 @@ import templatesRouter from './routes/templates.js';
 import storageRouter from './routes/storage.js';
 import bakersRouter from './routes/bakers.js';
 import ordersRouter from './routes/orders.js';
+import customersRouter from './routes/customers.js';
 const app = express();
 
 app.use(cors());
@@ -19,5 +20,6 @@ app.use('/api', templatesRouter);
 app.use('/api', storageRouter);
 app.use('/api', bakersRouter);
 app.use('/api', ordersRouter);
+app.use('/api', customersRouter);
 
 export default app;

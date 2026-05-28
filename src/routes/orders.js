@@ -295,7 +295,7 @@ router.patch('/orders/:id/status', requireAuth, async (req, res) => {
     }
 
     const { data: appUser } = await supabase
-      .from('baker_appusers').select('baker_id, id')
+      .from('baker_appusers').select('baker_id, id, first_name, last_name')
       .eq('auth_user_id', req.user.id).maybeSingle();
     if (!appUser) return res.status(403).json({ error: 'Not a baker account' });
 
@@ -315,7 +315,7 @@ router.patch('/orders/:id/status', requireAuth, async (req, res) => {
       order_id: req.params.id, baker_id: appUser.baker_id,
       event: 'status_changed', comment: comment ?? null,
       changes: { status: { from: existing.status, to: status } },
-      changed_by_name: req.user.email ?? null,
+      changed_by_name: `${appUser.first_name ?? ''} ${appUser.last_name ?? ''}`.trim() || req.user.email,
     });
 
     res.json(order);
@@ -335,7 +335,7 @@ router.patch('/orders/:id', requireAuth, async (req, res) => {
     if (!comment?.trim()) return res.status(400).json({ error: 'comment is required when editing an order' });
 
     const { data: appUser } = await supabase
-      .from('baker_appusers').select('baker_id')
+      .from('baker_appusers').select('baker_id, first_name, last_name')
       .eq('auth_user_id', req.user.id).maybeSingle();
     if (!appUser) return res.status(403).json({ error: 'Not a baker account' });
 
@@ -374,7 +374,7 @@ router.patch('/orders/:id', requireAuth, async (req, res) => {
     await supabase.from('order_audit_log').insert({
       order_id: req.params.id, baker_id: appUser.baker_id,
       event: 'edited', comment: comment.trim(), changes,
-      changed_by_name: req.user.email ?? null,
+      changed_by_name: `${appUser.first_name ?? ''} ${appUser.last_name ?? ''}`.trim() || req.user.email,
     });
 
     res.json(order);

@@ -284,43 +284,111 @@ router.get('/orders/:id', requireAuth, async (req, res) => {
 });
 
 // ── PATCH /api/orders/:id/status ──────────────────────────────────────────────
-// Baker approves, moves to in_progress, marks ready, etc.
 
 const VALID_STATUSES = ['pending', 'approved', 'in_progress', 'ready', 'delivered', 'cancelled'];
 
 router.patch('/orders/:id/status', requireAuth, async (req, res) => {
   try {
-    const { status } = req.body;
+    const { status, comment } = req.body;
     if (!VALID_STATUSES.includes(status)) {
       return res.status(400).json({ error: `status must be one of: ${VALID_STATUSES.join(', ')}` });
     }
 
     const { data: appUser } = await supabase
-      .from('baker_appusers')
-      .select('baker_id, id')
-      .eq('auth_user_id', req.user.id)
-      .maybeSingle();
-
+      .from('baker_appusers').select('baker_id, id')
+      .eq('auth_user_id', req.user.id).maybeSingle();
     if (!appUser) return res.status(403).json({ error: 'Not a baker account' });
 
+    const { data: existing } = await supabase
+      .from('orders').select('status').eq('id', req.params.id).eq('baker_id', appUser.baker_id).maybeSingle();
+    if (!existing) return res.status(404).json({ error: 'Order not found' });
+
     const updates = { status };
-    if (status === 'approved') {
-      updates.approved_at = new Date().toISOString();
-      updates.approved_by = appUser.id;
-    }
+    if (status === 'approved') { updates.approved_at = new Date().toISOString(); updates.approved_by = appUser.id; }
 
     const { data: order, error } = await supabase
-      .from('orders')
-      .update(updates)
-      .eq('id', req.params.id)
-      .eq('baker_id', appUser.baker_id)
-      .select('id, status, approved_at')
-      .maybeSingle();
+      .from('orders').update(updates).eq('id', req.params.id).eq('baker_id', appUser.baker_id)
+      .select('id, status, approved_at').maybeSingle();
+    if (error) return res.status(500).json({ error: error.message });
 
-    if (error)  return res.status(500).json({ error: error.message });
-    if (!order) return res.status(404).json({ error: 'Order not found' });
+    await supabase.from('order_audit_log').insert({
+      order_id: req.params.id, baker_id: appUser.baker_id,
+      event: 'status_changed', comment: comment ?? null,
+      changes: { status: { from: existing.status, to: status } },
+    });
 
     res.json(order);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── PATCH /api/orders/:id ─────────────────────────────────────────────────────
+// Edit order details. Requires a comment explaining the change.
+
+const EDITABLE_FIELDS = ['weight_kg', 'delivery_date', 'delivery_time', 'delivery_mode', 'delivery_address', 'special_instructions'];
+
+router.patch('/orders/:id', requireAuth, async (req, res) => {
+  try {
+    const { comment, ...fields } = req.body;
+    if (!comment?.trim()) return res.status(400).json({ error: 'comment is required when editing an order' });
+
+    const { data: appUser } = await supabase
+      .from('baker_appusers').select('baker_id')
+      .eq('auth_user_id', req.user.id).maybeSingle();
+    if (!appUser) return res.status(403).json({ error: 'Not a baker account' });
+
+    const { data: existing } = await supabase
+      .from('orders').select(EDITABLE_FIELDS.join(', '))
+      .eq('id', req.params.id).eq('baker_id', appUser.baker_id).maybeSingle();
+    if (!existing) return res.status(404).json({ error: 'Order not found' });
+
+    const updates = {};
+    const changes = {};
+    for (const f of EDITABLE_FIELDS) {
+      if (f in fields && fields[f] !== existing[f]) {
+        updates[f] = fields[f];
+        changes[f] = { from: existing[f], to: fields[f] };
+      }
+    }
+
+    if (Object.keys(updates).length === 0) return res.status(400).json({ error: 'No changes detected' });
+
+    const { data: order, error } = await supabase
+      .from('orders').update(updates).eq('id', req.params.id).eq('baker_id', appUser.baker_id)
+      .select('id, ' + EDITABLE_FIELDS.join(', ')).maybeSingle();
+    if (error) return res.status(500).json({ error: error.message });
+
+    await supabase.from('order_audit_log').insert({
+      order_id: req.params.id, baker_id: appUser.baker_id,
+      event: 'edited', comment: comment.trim(), changes,
+    });
+
+    res.json(order);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── GET /api/orders/:id/audit ─────────────────────────────────────────────────
+
+router.get('/orders/:id/audit', requireAuth, async (req, res) => {
+  try {
+    const { data: appUser } = await supabase
+      .from('baker_appusers').select('baker_id')
+      .eq('auth_user_id', req.user.id).maybeSingle();
+    if (!appUser) return res.status(403).json({ error: 'Not a baker account' });
+
+    const { data: order } = await supabase
+      .from('orders').select('id').eq('id', req.params.id).eq('baker_id', appUser.baker_id).maybeSingle();
+    if (!order) return res.status(404).json({ error: 'Order not found' });
+
+    const { data, error } = await supabase
+      .from('order_audit_log').select('id, event, comment, changes, changed_at')
+      .eq('order_id', req.params.id).order('changed_at', { ascending: false });
+    if (error) return res.status(500).json({ error: error.message });
+
+    res.json(data);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

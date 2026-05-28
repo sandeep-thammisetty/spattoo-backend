@@ -385,6 +385,55 @@ router.patch('/orders/:id', requireAuth, async (req, res) => {
   }
 });
 
+// ── PATCH /api/orders/:id/design ─────────────────────────────────────────────
+// Updates the 3D design snapshot + thumbnail. Requires a comment.
+
+router.patch('/orders/:id/design', requireAuth, async (req, res) => {
+  try {
+    const { designSnapshot, designThumbnail, comment } = req.body;
+    if (!designSnapshot)    return res.status(400).json({ error: 'designSnapshot is required' });
+    if (!comment?.trim())   return res.status(400).json({ error: 'comment is required' });
+
+    const { data: appUser } = await supabase
+      .from('baker_appusers').select('baker_id, first_name, last_name')
+      .eq('auth_user_id', req.user.id).maybeSingle();
+    if (!appUser) return res.status(403).json({ error: 'Not a baker account' });
+
+    const { data: existing } = await supabase
+      .from('orders').select('id').eq('id', req.params.id).eq('baker_id', appUser.baker_id).maybeSingle();
+    if (!existing) return res.status(404).json({ error: 'Order not found' });
+
+    // Upload new thumbnail if provided
+    let thumbnailUrl = null;
+    if (designThumbnail) {
+      const base64Data = designThumbnail.replace(/^data:image\/png;base64,/, '');
+      const buffer     = Buffer.from(base64Data, 'base64');
+      const key        = `orders/thumbnails/${randomUUID()}.png`;
+      thumbnailUrl     = await putObject(key, buffer, 'image/png');
+    }
+
+    const updates = { design_snapshot: designSnapshot };
+    if (thumbnailUrl) updates.design_thumbnail_url = thumbnailUrl;
+
+    const { data: order, error } = await supabase
+      .from('orders').update(updates).eq('id', req.params.id).eq('baker_id', appUser.baker_id)
+      .select('id, design_thumbnail_url').maybeSingle();
+    if (error) return res.status(500).json({ error: `Update failed: ${error.message}` });
+
+    const { error: auditError } = await supabase.from('order_audit_log').insert({
+      order_id: req.params.id, baker_id: appUser.baker_id,
+      event: 'design_updated', comment: comment.trim(),
+      changes: { design_snapshot: { from: null, to: 'updated' } },
+      changed_by_name: `${appUser.first_name ?? ''} ${appUser.last_name ?? ''}`.trim() || req.user.email,
+    });
+    if (auditError) console.error('Audit log insert failed:', auditError.message);
+
+    res.json({ orderId: req.params.id, designThumbnailUrl: order.design_thumbnail_url });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── GET /api/orders/:id/audit ─────────────────────────────────────────────────
 
 router.get('/orders/:id/audit', requireAuth, async (req, res) => {

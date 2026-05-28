@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { randomUUID } from 'crypto';
 import { supabase } from '../services/supabase.js';
 import { putObject } from '../services/r2.js';
+import { requireAuth } from '../middleware/auth.js';
 
 const router = Router();
 
@@ -165,8 +166,6 @@ router.get('/baker/customers', requireAuth, async (req, res) => {
 // ── GET /api/orders ───────────────────────────────────────────────────────────
 // Baker-facing: list orders for the authenticated baker's account.
 // Query params: status, from, to (ISO dates)
-
-import { requireAuth } from '../middleware/auth.js';
 
 router.get('/orders', requireAuth, async (req, res) => {
   try {

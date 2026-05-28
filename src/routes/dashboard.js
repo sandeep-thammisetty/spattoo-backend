@@ -159,4 +159,50 @@ router.get('/baker/dashboard', requireAuth, async (req, res) => {
   }
 });
 
+// ── GET /api/baker/dashboard/breakdown?period=7d|30d|90d|all ─────────────────
+// Lightweight endpoint — only status breakdown + delivery split for a period.
+// Used by the dashboard period selector without refetching everything.
+
+router.get('/baker/dashboard/breakdown', requireAuth, async (req, res) => {
+  try {
+    const { data: appUser } = await supabase
+      .from('baker_appusers').select('baker_id')
+      .eq('auth_user_id', req.user.id).maybeSingle();
+    if (!appUser) return res.status(403).json({ error: 'Not a baker account' });
+
+    const { baker_id } = appUser;
+    const period = req.query.period ?? '30d';
+    const DAYS = { '7d': 7, '30d': 30, '90d': 90 };
+    const days = DAYS[period];
+
+    let query = supabase
+      .from('orders').select('status, delivery_mode')
+      .eq('baker_id', baker_id);
+
+    if (days) {
+      const from = new Date(Date.now() - days * 86400000).toISOString();
+      query = query.gte('created_at', from);
+    }
+
+    const { data, error } = await query;
+    if (error) return res.status(500).json({ error: error.message });
+
+    const statusMap = {};
+    (data ?? []).forEach(o => { statusMap[o.status] = (statusMap[o.status] ?? 0) + 1; });
+    const statusBreakdown = Object.entries(statusMap)
+      .map(([status, count]) => ({ status, count }))
+      .sort((a, b) => b.count - a.count);
+
+    const pickupCount   = (data ?? []).filter(o => o.delivery_mode !== 'home_delivery').length;
+    const deliveryCount = (data ?? []).filter(o => o.delivery_mode === 'home_delivery').length;
+
+    res.json({
+      statusBreakdown,
+      deliverySplit: { pickup: pickupCount, homeDelivery: deliveryCount },
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;

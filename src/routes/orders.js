@@ -22,6 +22,53 @@ const router = Router();
 //   deliveryMode         string   "pickup" | "home_delivery"  (default: "pickup")
 //   deliveryAddress      string?  required when deliveryMode = "home_delivery"
 
+// ── GET /api/flavours?bakerSlug=xxx ──────────────────────────────────────────
+// Public. Returns effective flavour list for a baker:
+//   active global flavours (minus exclusions) + baker's custom flavours
+
+router.get('/flavours', async (req, res) => {
+  try {
+    const { bakerSlug } = req.query;
+    if (!bakerSlug) return res.status(400).json({ error: 'bakerSlug is required' });
+
+    const { data: baker } = await supabase
+      .from('bakers').select('id').eq('slug', bakerSlug).eq('is_active', true).maybeSingle();
+    if (!baker) return res.status(404).json({ error: 'Baker not found' });
+
+    // Excluded global flavour IDs for this baker
+    const { data: exclusions } = await supabase
+      .from('baker_flavour_exclusions')
+      .select('flavour_id')
+      .eq('baker_id', baker.id);
+    const excludedIds = (exclusions ?? []).map(e => e.flavour_id);
+
+    // Active global flavours minus exclusions
+    let globalQuery = supabase
+      .from('flavours')
+      .select('id, name, description, sort_order')
+      .eq('is_active', true)
+      .order('sort_order').order('name');
+    if (excludedIds.length) globalQuery = globalQuery.not('id', 'in', `(${excludedIds.join(',')})`);
+    const { data: globals } = await globalQuery;
+
+    // Baker's custom flavours
+    const { data: custom } = await supabase
+      .from('baker_flavours')
+      .select('id, name, description, sort_order')
+      .eq('baker_id', baker.id).eq('is_active', true)
+      .order('sort_order').order('name');
+
+    const result = [
+      ...(globals ?? []).map(f => ({ ...f, source: 'global' })),
+      ...(custom  ?? []).map(f => ({ ...f, source: 'baker'  })),
+    ];
+
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.post('/orders', async (req, res) => {
   try {
     const {

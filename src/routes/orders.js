@@ -315,6 +315,7 @@ router.patch('/orders/:id/status', requireAuth, async (req, res) => {
       order_id: req.params.id, baker_id: appUser.baker_id,
       event: 'status_changed', comment: comment ?? null,
       changes: { status: { from: existing.status, to: status } },
+      changed_by_name: req.user.email ?? null,
     });
 
     res.json(order);
@@ -373,6 +374,7 @@ router.patch('/orders/:id', requireAuth, async (req, res) => {
     await supabase.from('order_audit_log').insert({
       order_id: req.params.id, baker_id: appUser.baker_id,
       event: 'edited', comment: comment.trim(), changes,
+      changed_by_name: req.user.email ?? null,
     });
 
     res.json(order);
@@ -395,7 +397,7 @@ router.get('/orders/:id/audit', requireAuth, async (req, res) => {
     if (!order) return res.status(404).json({ error: 'Order not found' });
 
     const { data, error } = await supabase
-      .from('order_audit_log').select('id, event, comment, changes, changed_at')
+      .from('order_audit_log').select('id, event, comment, changes, changed_by_name, changed_at')
       .eq('order_id', req.params.id).order('changed_at', { ascending: false });
     if (error) return res.status(500).json({ error: error.message });
 

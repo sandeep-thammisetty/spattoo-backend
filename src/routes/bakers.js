@@ -129,6 +129,49 @@ router.get('/baker/profile', requireAuth, async (req, res) => {
   }
 });
 
+router.get('/baker/settings', requireAuth, async (req, res) => {
+  try {
+    const { data: contact } = await supabase
+      .from('baker_appusers')
+      .select('baker_id')
+      .eq('auth_user_id', req.user.id)
+      .maybeSingle();
+    if (!contact) return res.status(404).json({ error: 'No baker account found' });
+
+    const { data: baker } = await supabase
+      .from('bakers')
+      .select('settings')
+      .eq('id', contact.baker_id)
+      .single();
+    if (!baker) return res.status(404).json({ error: 'Baker not found' });
+
+    res.json(baker.settings ?? {});
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.put('/baker/settings', requireAuth, async (req, res) => {
+  try {
+    const { data: contact } = await supabase
+      .from('baker_appusers')
+      .select('baker_id')
+      .eq('auth_user_id', req.user.id)
+      .maybeSingle();
+    if (!contact) return res.status(404).json({ error: 'No baker account found' });
+
+    const { error } = await supabase
+      .from('bakers')
+      .update({ settings: req.body })
+      .eq('id', contact.baker_id);
+    if (error) return res.status(500).json({ error: error.message });
+
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get('/admin/bakers', requireAuth, async (req, res) => {
   try {
     const { data, error } = await supabase

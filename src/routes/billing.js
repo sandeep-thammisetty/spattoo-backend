@@ -32,7 +32,7 @@ async function getBakerForUser(userId) {
   if (!contact) return null;
   const { data: baker } = await supabase
     .from('bakers')
-    .select('id, name, email, subscription_tier, subscription_status, trial_ends_at, razorpay_customer_id, razorpay_subscription_id')
+    .select('id, name, email, subscription_tier, subscription_status, trial_ends_at, billing_customer_id, billing_subscription_id')
     .eq('id', contact.baker_id).single();
   return baker;
 }
@@ -44,9 +44,9 @@ router.get('/billing/status', requireAuth, async (req, res) => {
     if (!baker) return res.status(404).json({ error: 'Baker not found' });
 
     let nextBillingAt = null;
-    if (baker.razorpay_subscription_id) {
+    if (baker.billing_subscription_id) {
       try {
-        const sub = await razorpay.subscriptions.fetch(baker.razorpay_subscription_id);
+        const sub = await razorpay.subscriptions.fetch(baker.billing_subscription_id);
         if (sub.charge_at) nextBillingAt = new Date(sub.charge_at * 1000).toISOString();
       } catch {}
     }
@@ -55,7 +55,7 @@ router.get('/billing/status', requireAuth, async (req, res) => {
       tier:                     baker.subscription_tier,
       status:                   baker.subscription_status,
       trial_ends_at:            baker.trial_ends_at,
-      razorpay_subscription_id: baker.razorpay_subscription_id,
+      billing_subscription_id: baker.billing_subscription_id,
       next_billing_at:          nextBillingAt,
     });
   } catch (err) {
@@ -80,7 +80,7 @@ router.post('/billing/subscribe', requireAuth, async (req, res) => {
     if (!baker) return res.status(404).json({ error: 'Baker not found' });
 
     // Get or create Razorpay customer
-    let customerId = baker.razorpay_customer_id;
+    let customerId = baker.billing_customer_id;
     if (!customerId) {
       const customer = await razorpay.customers.create({
         name:  baker.name,
@@ -88,13 +88,13 @@ router.post('/billing/subscribe', requireAuth, async (req, res) => {
         fail_existing: 0,
       });
       customerId = customer.id;
-      await supabase.from('bakers').update({ razorpay_customer_id: customerId }).eq('id', baker.id);
+      await supabase.from('bakers').update({ billing_customer_id: customerId }).eq('id', baker.id);
     }
 
     // Cancel any existing active subscription first
-    if (baker.razorpay_subscription_id) {
+    if (baker.billing_subscription_id) {
       try {
-        await razorpay.subscriptions.cancel(baker.razorpay_subscription_id, { cancel_at_cycle_end: 0 });
+        await razorpay.subscriptions.cancel(baker.billing_subscription_id, { cancel_at_cycle_end: 0 });
       } catch {}
     }
 
@@ -108,7 +108,7 @@ router.post('/billing/subscribe', requireAuth, async (req, res) => {
     });
 
     await supabase.from('bakers').update({
-      razorpay_subscription_id: subscription.id,
+      billing_subscription_id: subscription.id,
       subscription_tier:        tier,
       subscription_status:      'pending',
     }).eq('id', baker.id);
@@ -128,9 +128,9 @@ router.post('/billing/cancel', requireAuth, async (req, res) => {
   try {
     const baker = await getBakerForUser(req.user.id);
     if (!baker) return res.status(404).json({ error: 'Baker not found' });
-    if (!baker.razorpay_subscription_id) return res.status(400).json({ error: 'No active subscription' });
+    if (!baker.billing_subscription_id) return res.status(400).json({ error: 'No active subscription' });
 
-    await razorpay.subscriptions.cancel(baker.razorpay_subscription_id, { cancel_at_cycle_end: 1 });
+    await razorpay.subscriptions.cancel(baker.billing_subscription_id, { cancel_at_cycle_end: 1 });
     await supabase.from('bakers').update({ subscription_status: 'cancelled' }).eq('id', baker.id);
 
     res.json({ ok: true });
@@ -163,7 +163,7 @@ router.post('/billing/webhook', async (req, res) => {
 
     const { data: baker } = await supabase
       .from('bakers').select('id')
-      .eq('razorpay_subscription_id', sub.id).maybeSingle();
+      .eq('billing_subscription_id', sub.id).maybeSingle();
 
     if (!baker) return res.json({ ok: true });
 

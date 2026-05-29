@@ -10,6 +10,7 @@ import ordersRouter from './routes/orders.js';
 import customersRouter from './routes/customers.js';
 import dashboardRouter from './routes/dashboard.js';
 import billingRouter from './routes/billing.js';
+import subscriptionsRouter from './routes/subscriptions.js';
 
 const app = express();
 
@@ -30,5 +31,6 @@ app.use('/api', ordersRouter);
 app.use('/api', customersRouter);
 app.use('/api', dashboardRouter);
 app.use('/api', billingRouter);
+app.use('/api', subscriptionsRouter);
 
 export default app;

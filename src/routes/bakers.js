@@ -3,6 +3,7 @@ import { randomBytes } from 'crypto';
 import { supabase } from '../services/supabase.js';
 import { requireAuth } from '../middleware/auth.js';
 import { config } from '../config.js';
+import { logSubscriptionEvent } from './subscriptions.js';
 
 function toPublicUrl(key) {
   if (!key) return null;
@@ -115,10 +116,19 @@ router.get('/baker/profile', requireAuth, async (req, res) => {
 
     const { data: baker } = await supabase
       .from('bakers')
-      .select('id, name, slug, logo_url, primary_color, accent_color, instagram_handle, website_url, tagline')
+      .select('id, name, slug, logo_url, primary_color, accent_color, instagram_handle, website_url, tagline, subscription_status, trial_ends_at')
       .eq('id', contact.baker_id)
       .single();
     if (!baker) return res.status(404).json({ error: 'Baker not found' });
+
+    // Auto-expire trial if past trial_ends_at
+    if (baker.subscription_status === 'trial' && baker.trial_ends_at && new Date(baker.trial_ends_at) < new Date()) {
+      await supabase.from('bakers').update({ subscription_status: 'expired' }).eq('id', baker.id);
+      await logSubscriptionEvent(baker.id, {
+        event: 'trial_expired', previousStatus: 'trial', newStatus: 'expired', changedBy: 'system',
+      });
+      baker.subscription_status = 'expired';
+    }
 
     res.json({
       baker: {

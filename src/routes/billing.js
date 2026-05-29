@@ -35,9 +35,10 @@ async function getBakerForUser(userId, fields = 'id, name, email, subscription_t
     .from('baker_appusers').select('baker_id')
     .eq('auth_user_id', userId).maybeSingle();
   if (!contact) return null;
-  const { data: baker } = await supabase
+  const { data: baker, error } = await supabase
     .from('bakers').select(fields).eq('id', contact.baker_id).single();
-  return baker;
+  if (error) console.error('getBakerForUser failed:', error.message, '| fields:', fields);
+  return baker ?? null;
 }
 
 // ── GET /billing/periods ──────────────────────────────────────────────────────

@@ -115,15 +115,49 @@ router.get('/baker/profile', requireAuth, async (req, res) => {
 
     const { data: baker } = await supabase
       .from('bakers')
-      .select('id, name, slug, logo_url, primary_color, accent_color')
+      .select('id, name, slug, logo_url, primary_color, accent_color, instagram_handle, website_url, tagline')
       .eq('id', contact.baker_id)
       .single();
     if (!baker) return res.status(404).json({ error: 'Baker not found' });
 
     res.json({
-      baker: { id: baker.id, name: baker.name, slug: baker.slug, logo_url: toPublicUrl(baker.logo_url), primary_color: baker.primary_color, accent_color: baker.accent_color },
+      baker: {
+        id: baker.id, name: baker.name, slug: baker.slug,
+        logo_url: toPublicUrl(baker.logo_url),
+        primary_color: baker.primary_color, accent_color: baker.accent_color,
+        instagram_handle: baker.instagram_handle, website_url: baker.website_url,
+        tagline: baker.tagline,
+      },
       user: { firstName: contact.first_name, lastName: contact.last_name, email: req.user.email },
     });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.patch('/baker/profile', requireAuth, async (req, res) => {
+  try {
+    const { data: contact } = await supabase
+      .from('baker_appusers')
+      .select('baker_id')
+      .eq('auth_user_id', req.user.id)
+      .maybeSingle();
+    if (!contact) return res.status(404).json({ error: 'No baker account found' });
+
+    const ALLOWED = ['primary_color', 'accent_color', 'logo_url', 'instagram_handle', 'website_url', 'tagline'];
+    const updates = {};
+    for (const f of ALLOWED) {
+      if (f in req.body) updates[f] = req.body[f] || null;
+    }
+    if (!Object.keys(updates).length) return res.status(400).json({ error: 'No fields to update' });
+
+    const { error } = await supabase
+      .from('bakers')
+      .update(updates)
+      .eq('id', contact.baker_id);
+    if (error) return res.status(500).json({ error: error.message });
+
+    res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

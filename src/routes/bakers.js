@@ -95,19 +95,22 @@ router.post('/admin/bakers', requireAuth, async (req, res) => {
     }
 
     // Start baker on Spark (free, 30 days)
-    const { data: sparkPlan } = await supabase
+    const { data: sparkPlan, error: planErr } = await supabase
       .from('subscription_plans').select('id').eq('name', 'spark').maybeSingle();
+    if (planErr) console.error('Could not find spark plan:', planErr.message);
 
+    const today    = new Date().toISOString().slice(0, 10);
     const sparkEnd = new Date();
     sparkEnd.setDate(sparkEnd.getDate() + 30);
 
-    await supabase.from('baker_subscriptions').insert({
+    const { error: subErr } = await supabase.from('baker_subscriptions').insert({
       baker_id:   data.id,
       plan_id:    sparkPlan?.id ?? null,
       status:     'active',
-      start_date: new Date().toISOString().slice(0, 10),
+      start_date: today,
       end_date:   sparkEnd.toISOString().slice(0, 10),
     });
+    if (subErr) console.error('baker_subscriptions insert failed:', subErr.message);
 
     if (sparkPlan) {
       await supabase.from('bakers')

@@ -118,7 +118,7 @@ router.get('/admin/bakers/:id/subscription', requireAuth, async (req, res) => {
 // Admin override — create a new baker_subscriptions row with the given plan/status/end date
 router.post('/admin/bakers/:id/subscription', requireAuth, async (req, res) => {
   try {
-    const { plan_name, status, end_date, note } = req.body;
+    const { plan_name, billing_period_id, status, end_date, note } = req.body;
     if (!plan_name) return res.status(400).json({ error: 'plan_name is required' });
 
     const { data: plan } = await supabase
@@ -135,14 +135,28 @@ router.post('/admin/bakers/:id/subscription', requireAuth, async (req, res) => {
         .eq('id', current.id);
     }
 
+    // Calculate end_date from billing period if not explicitly provided
+    let resolvedEndDate = end_date || null;
+    if (!resolvedEndDate && billing_period_id) {
+      const { data: period } = await supabase
+        .from('billing_periods').select('months').eq('id', billing_period_id).maybeSingle();
+      if (period?.months) {
+        const d = new Date();
+        d.setMonth(d.getMonth() + period.months);
+        resolvedEndDate = d.toISOString().slice(0, 10);
+      }
+    }
+
     // Create the new row
-    await supabase.from('baker_subscriptions').insert({
-      baker_id:   req.params.id,
-      plan_id:    plan.id,
-      status:     status ?? 'active',
-      start_date: today,
-      end_date:   end_date || null,
+    const { error: insertErr } = await supabase.from('baker_subscriptions').insert({
+      baker_id:          req.params.id,
+      plan_id:           plan.id,
+      billing_period_id: billing_period_id || null,
+      status:            status ?? 'active',
+      start_date:        today,
+      end_date:          resolvedEndDate,
     });
+    if (insertErr) return res.status(500).json({ error: insertErr.message });
 
     // Keep subscription_plan_id in sync
     await supabase.from('bakers')

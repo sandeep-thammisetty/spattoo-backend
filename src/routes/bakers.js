@@ -3,7 +3,7 @@ import { randomBytes } from 'crypto';
 import { supabase } from '../services/supabase.js';
 import { requireAuth } from '../middleware/auth.js';
 import { config } from '../config.js';
-import { logSubscriptionEvent } from './subscriptions.js';
+import { logSubscriptionEvent, deriveSubscription } from './subscriptions.js';
 
 function toPublicUrl(key) {
   if (!key) return null;
@@ -18,7 +18,6 @@ router.post('/admin/bakers', requireAuth, async (req, res) => {
       name, slug, email, tagline,
       instagram_handle, website_url,
       primary_color, accent_color, logo_url,
-      subscription_tier, trial_ends_at,
       currency_code, timezone,
       primaryUser,
     } = req.body;
@@ -48,26 +47,22 @@ router.post('/admin/bakers', requireAuth, async (req, res) => {
     });
     if (authError) return res.status(400).json({ error: authError.message });
 
-    const tier = subscription_tier ?? 'trial';
     const { data, error } = await supabase
       .from('bakers')
       .insert({
         name,
         slug,
-        email: email || null,
-        tagline:             tagline || null,
-        instagram_handle:    instagram_handle || null,
-        website_url:         website_url || null,
-        primary_color:       primary_color || null,
-        accent_color:        accent_color || null,
-        logo_url:            logo_url || null,
-        subscription_tier:   tier,
-        subscription_status: tier === 'trial' ? 'trial' : 'active',
-        trial_ends_at:       trial_ends_at || null,
-        currency_code:       currency_code || 'INR',
-        timezone:            timezone || 'Asia/Kolkata',
-        auth_user_id:        authData.user.id,
-        is_active:           true,
+        email:            email            || null,
+        tagline:          tagline          || null,
+        instagram_handle: instagram_handle || null,
+        website_url:      website_url      || null,
+        primary_color:    primary_color    || null,
+        accent_color:     accent_color     || null,
+        logo_url:         logo_url         || null,
+        currency_code:    currency_code    || 'INR',
+        timezone:         timezone         || 'Asia/Kolkata',
+        auth_user_id:     authData.user.id,
+        is_active:        true,
       })
       .select('id')
       .single();
@@ -99,6 +94,31 @@ router.post('/admin/bakers', requireAuth, async (req, res) => {
       return res.status(500).json({ error: userError.message });
     }
 
+    // Start baker on Spark (free, 30 days)
+    const { data: sparkPlan } = await supabase
+      .from('subscription_plans').select('id').eq('name', 'spark').maybeSingle();
+
+    const sparkEnd = new Date();
+    sparkEnd.setDate(sparkEnd.getDate() + 30);
+
+    await supabase.from('baker_subscriptions').insert({
+      baker_id:   data.id,
+      plan_id:    sparkPlan?.id ?? null,
+      status:     'active',
+      start_date: new Date().toISOString().slice(0, 10),
+      end_date:   sparkEnd.toISOString().slice(0, 10),
+    });
+
+    if (sparkPlan) {
+      await supabase.from('bakers')
+        .update({ subscription_plan_id: sparkPlan.id })
+        .eq('id', data.id);
+    }
+
+    await logSubscriptionEvent(data.id, {
+      event: 'activated', newTier: 'spark', newStatus: 'active', changedBy: 'system',
+    });
+
     res.status(201).json({ id: data.id, tempPassword });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -116,29 +136,36 @@ router.get('/baker/profile', requireAuth, async (req, res) => {
 
     const { data: baker } = await supabase
       .from('bakers')
-      .select('id, name, slug, logo_url, primary_color, accent_color, instagram_handle, website_url, tagline, subscription_status, trial_ends_at')
+      .select('id, name, slug, logo_url, primary_color, accent_color, instagram_handle, website_url, tagline')
       .eq('id', contact.baker_id)
       .single();
     if (!baker) return res.status(404).json({ error: 'Baker not found' });
 
-    // Auto-expire trial if past trial_ends_at
-    if (baker.subscription_status === 'trial' && baker.trial_ends_at && new Date(baker.trial_ends_at) < new Date()) {
-      await supabase.from('bakers').update({ subscription_status: 'expired' }).eq('id', baker.id);
-      await logSubscriptionEvent(baker.id, {
-        event: 'trial_expired', previousStatus: 'trial', newStatus: 'expired', changedBy: 'system',
-      });
-      baker.subscription_status = 'expired';
+    const sub = await deriveSubscription(contact.baker_id);
+
+    // Auto-log expiry event when status flips to expired for the first time
+    if (sub.status === 'expired') {
+      const { count } = await supabase
+        .from('subscription_events')
+        .select('id', { count: 'exact', head: true })
+        .eq('baker_id', baker.id).eq('event', 'expired');
+      if (!count) {
+        await logSubscriptionEvent(baker.id, {
+          event: 'expired', previousStatus: 'active', newStatus: 'expired', changedBy: 'system',
+        });
+      }
     }
 
     res.json({
       baker: {
         id: baker.id, name: baker.name, slug: baker.slug,
-        logo_url: toPublicUrl(baker.logo_url),
-        primary_color: baker.primary_color, accent_color: baker.accent_color,
+        logo_url:         toPublicUrl(baker.logo_url),
+        primary_color:    baker.primary_color,  accent_color: baker.accent_color,
         instagram_handle: baker.instagram_handle, website_url: baker.website_url,
-        tagline: baker.tagline,
-        subscription_status: baker.subscription_status,
-        trial_ends_at:       baker.trial_ends_at,
+        tagline:          baker.tagline,
+        subscription_status: sub.status,
+        subscription_plan:   sub.plan?.name ?? null,
+        subscription_end:    sub.end_date   ?? null,
       },
       user: { firstName: contact.first_name, lastName: contact.last_name, email: req.user.email },
     });

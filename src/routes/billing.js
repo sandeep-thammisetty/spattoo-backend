@@ -4,7 +4,7 @@ import crypto from 'crypto';
 import { supabase } from '../services/supabase.js';
 import { requireAuth } from '../middleware/auth.js';
 import { config } from '../config.js';
-import { logSubscriptionEvent } from './subscriptions.js';
+import { logSubscriptionEvent, deriveSubscription } from './subscriptions.js';
 
 const router = Router();
 
@@ -55,26 +55,16 @@ router.get('/billing/periods', requireAuth, async (req, res) => {
 // ── GET /billing/status ───────────────────────────────────────────────────────
 router.get('/billing/status', requireAuth, async (req, res) => {
   try {
-    const baker = await getBakerForUser(req.user.id,
-      'id, subscription_tier, subscription_status, trial_ends_at, subscription_plan_id');
+    const baker = await getBakerForUser(req.user.id, 'id');
     if (!baker) return res.status(404).json({ error: 'Baker not found' });
 
-    // Fetch active baker_subscription for next billing date
-    const { data: activeSub } = await supabase
-      .from('baker_subscriptions')
-      .select('end_date, billing_period_id, billing_periods(display_name)')
-      .eq('baker_id', baker.id)
-      .eq('status', 'active')
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
+    const sub = await deriveSubscription(baker.id);
 
     res.json({
-      tier:           baker.subscription_tier,
-      status:         baker.subscription_status,
-      trial_ends_at:  baker.trial_ends_at,
-      next_billing_at: activeSub?.end_date ?? null,
-      billing_period:  activeSub?.billing_periods?.display_name ?? null,
+      tier:            sub.plan?.name        ?? null,
+      status:          sub.status,
+      next_billing_at: sub.end_date          ?? null,
+      billing_period:  sub.period?.display_name ?? null,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -158,9 +148,7 @@ router.post('/billing/subscribe', requireAuth, async (req, res) => {
 
     await supabase.from('bakers').update({
       billing_subscription_id: subscription.id,
-      subscription_tier:       tier,
       subscription_plan_id:    plan?.id ?? null,
-      subscription_status:     'pending',
     }).eq('id', baker.id);
 
     res.json({ subscription_id: subscription.id, key_id: config.razorpay.keyId });
@@ -183,8 +171,7 @@ router.post('/billing/cancel', requireAuth, async (req, res) => {
       .update({ status: 'cancelled', end_date: today })
       .eq('baker_id', baker.id).eq('status', 'active');
 
-    await supabase.from('bakers')
-      .update({ subscription_status: 'cancelled' }).eq('id', baker.id);
+    // subscription_status is derived from baker_subscriptions — no bakers update needed
 
     res.json({ ok: true });
   } catch (err) {
@@ -221,9 +208,7 @@ router.post('/billing/activate-spark', requireAuth, async (req, res) => {
     });
 
     await supabase.from('bakers').update({
-      subscription_tier:    'spark',
       subscription_plan_id: plan?.id ?? null,
-      subscription_status:  'active',
     }).eq('id', baker.id);
 
     await logSubscriptionEvent(baker.id, {
@@ -254,10 +239,11 @@ router.post('/billing/webhook', async (req, res) => {
     const sub = payload?.payload?.subscription?.entity;
     if (!sub?.id) return res.json({ ok: true });
 
-    const { data: baker } = await supabase
-      .from('bakers').select('id')
+    // Find the subscription row directly by billing_subscription_id
+    const { data: subRow } = await supabase
+      .from('baker_subscriptions').select('id, baker_id')
       .eq('billing_subscription_id', sub.id).maybeSingle();
-    if (!baker) return res.json({ ok: true });
+    if (!subRow) return res.json({ ok: true });
 
     const STATUS_MAP = {
       'subscription.activated': 'active',
@@ -271,21 +257,10 @@ router.post('/billing/webhook', async (req, res) => {
 
     const newStatus = STATUS_MAP[event];
     if (newStatus) {
-      await supabase.from('bakers').update({ subscription_status: newStatus }).eq('id', baker.id);
-
-      // Sync baker_subscriptions row
-      if (newStatus === 'active') {
-        await supabase.from('baker_subscriptions')
-          .update({ status: 'active' })
-          .eq('baker_id', baker.id)
-          .eq('billing_subscription_id', sub.id);
-      } else if (['cancelled', 'paused'].includes(newStatus)) {
-        const today = new Date().toISOString().slice(0, 10);
-        await supabase.from('baker_subscriptions')
-          .update({ status: newStatus, end_date: today })
-          .eq('baker_id', baker.id)
-          .eq('billing_subscription_id', sub.id);
-      }
+      const today = new Date().toISOString().slice(0, 10);
+      const update = { status: newStatus };
+      if (['cancelled', 'paused'].includes(newStatus)) update.end_date = today;
+      await supabase.from('baker_subscriptions').update(update).eq('id', subRow.id);
     }
 
     res.json({ ok: true });

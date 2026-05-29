@@ -30,7 +30,7 @@ function getRazorpayPlanId(tier, periodName) {
   return process.env[key] ?? null;
 }
 
-async function getBakerForUser(userId, fields = 'id, name, email, subscription_tier, subscription_status, trial_ends_at') {
+async function getBakerForUser(userId, fields = 'id, name, email, trial_ends_at') {
   const { data: contact, error: contactErr } = await supabase
     .from('baker_appusers').select('baker_id')
     .eq('auth_user_id', userId).maybeSingle();
@@ -52,7 +52,7 @@ router.get('/billing/debug-me', requireAuth, async (req, res) => {
     .from('baker_appusers').select('baker_id').eq('auth_user_id', req.user.id).maybeSingle();
   if (cErr || !contact) return res.json({ user_id: req.user.id, contact: null, contact_error: cErr?.message ?? 'no row' });
   const { data: baker, error: bErr } = await supabase
-    .from('bakers').select('id, subscription_status, billing_subscription_id').eq('id', contact.baker_id).single();
+    .from('bakers').select('id, subscription_status_id, billing_subscription_id').eq('id', contact.baker_id).single();
   res.json({ user_id: req.user.id, baker_id: contact.baker_id, baker, baker_error: bErr?.message ?? null });
 });
 
@@ -110,7 +110,7 @@ router.post('/billing/subscribe', requireAuth, async (req, res) => {
     }
 
     const baker = await getBakerForUser(req.user.id,
-      'id, name, email, subscription_tier, subscription_status, billing_customer_id, billing_subscription_id');
+      'id, name, email, billing_customer_id, billing_subscription_id');
     if (!baker) return res.status(404).json({ error: 'Baker not found' });
 
     // Get or create Razorpay customer
@@ -172,7 +172,7 @@ router.post('/billing/subscribe', requireAuth, async (req, res) => {
 // ── POST /billing/cancel ──────────────────────────────────────────────────────
 router.post('/billing/cancel', requireAuth, async (req, res) => {
   try {
-    const baker = await getBakerForUser(req.user.id, 'id, subscription_status, billing_subscription_id');
+    const baker = await getBakerForUser(req.user.id, 'id, billing_subscription_id');
     if (!baker) return res.status(404).json({ error: 'Baker not found' });
     if (!baker.billing_subscription_id) return res.status(400).json({ error: 'No active subscription' });
 
@@ -197,9 +197,9 @@ router.post('/billing/cancel', requireAuth, async (req, res) => {
 // ── POST /billing/activate-spark ─────────────────────────────────────────────
 router.post('/billing/activate-spark', requireAuth, async (req, res) => {
   try {
-    const baker = await getBakerForUser(req.user.id, 'id, subscription_tier, subscription_status');
+    const baker = await getBakerForUser(req.user.id, 'id, subscription_status_id');
     if (!baker) return res.status(404).json({ error: 'Baker not found' });
-    if (baker.subscription_status === 'active' && baker.subscription_tier !== 'trial') {
+    if (baker.subscription_status_id === SUBSCRIPTION_STATUS.ACTIVE) {
       return res.status(400).json({ error: 'Already on an active plan' });
     }
 
@@ -226,8 +226,7 @@ router.post('/billing/activate-spark', requireAuth, async (req, res) => {
     }).eq('id', baker.id);
 
     await logSubscriptionEvent(baker.id, {
-      event: 'activated', previousTier: baker.subscription_tier, newTier: 'spark',
-      previousStatus: baker.subscription_status, newStatus: 'active', changedBy: 'baker',
+      event: 'activated', newTier: 'spark', newStatus: 'active', changedBy: 'baker',
     });
 
     res.json({ ok: true });

@@ -251,7 +251,7 @@ router.get('/admin/bakers', requireAuth, async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('bakers')
-      .select('id, name, slug, email, subscription_tier, subscription_status, is_active, created_at')
+      .select('id, name, slug, email, subscription_status_id, is_active, created_at')
       .order('created_at', { ascending: false });
     if (error) return res.status(500).json({ error: error.message });
     res.json(data);

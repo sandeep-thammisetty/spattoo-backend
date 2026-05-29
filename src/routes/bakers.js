@@ -97,7 +97,7 @@ router.post('/admin/bakers', requireAuth, async (req, res) => {
     // Start baker on Spark (free, 30 days)
     const [{ data: sparkPlan, error: planErr }, { data: sparkPeriod }] = await Promise.all([
       supabase.from('subscription_plans').select('id').eq('name', 'spark').maybeSingle(),
-      supabase.from('billing_periods').select('id').eq('name', 'spark').maybeSingle(),
+      supabase.from('billing_periods').select('id').eq('name', 'monthly').maybeSingle(),
     ]);
     if (planErr) console.error('Could not find spark plan:', planErr.message);
 

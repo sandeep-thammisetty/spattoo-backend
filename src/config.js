@@ -11,6 +11,9 @@ const required = [
   'R2_SECRET_ACCESS_KEY',
   'R2_BUCKET',
   'R2_PUBLIC_URL',
+  'RAZORPAY_KEY_ID',
+  'RAZORPAY_KEY_SECRET',
+  'RAZORPAY_WEBHOOK_SECRET',
 ];
 
 for (const key of required) {
@@ -31,6 +34,18 @@ export const config = {
     secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
     bucket:          process.env.R2_BUCKET,
     publicUrl:       process.env.R2_PUBLIC_URL,
+  },
+  razorpay: {
+    keyId:         process.env.RAZORPAY_KEY_ID,
+    keySecret:     process.env.RAZORPAY_KEY_SECRET,
+    webhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET,
+    plans: {
+      // Set these in Render after creating plans in Razorpay dashboard
+      starterMonthly: process.env.RAZORPAY_PLAN_STARTER_MONTHLY,
+      starterYearly:  process.env.RAZORPAY_PLAN_STARTER_YEARLY,
+      proMonthly:     process.env.RAZORPAY_PLAN_PRO_MONTHLY,
+      proYearly:      process.env.RAZORPAY_PLAN_PRO_YEARLY,
+    },
   },
   port:     parseInt(process.env.PORT || '3000', 10),
 };

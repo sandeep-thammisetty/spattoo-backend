@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { supabase } from '../services/supabase.js';
 import { requireAuth } from '../middleware/auth.js';
+import { PLAN }   from '../constants/subscriptionPlans.js';
+import { PERIOD } from '../constants/billingPeriods.js';
 
 const router = Router();
 
@@ -121,9 +123,8 @@ router.post('/admin/bakers/:id/subscription', requireAuth, async (req, res) => {
     const { plan_name, billing_period_id, status, end_date, note } = req.body;
     if (!plan_name) return res.status(400).json({ error: 'plan_name is required' });
 
-    const { data: plan } = await supabase
-      .from('subscription_plans').select('id, name').eq('name', plan_name).maybeSingle();
-    if (!plan) return res.status(400).json({ error: `Unknown plan: ${plan_name}` });
+    const planId = PLAN.ID_BY_NAME[plan_name];
+    if (!planId) return res.status(400).json({ error: `Unknown plan: ${plan_name}` });
 
     const current = await deriveSubscription(req.params.id);
     const today   = new Date().toISOString().slice(0, 10);
@@ -135,14 +136,13 @@ router.post('/admin/bakers/:id/subscription', requireAuth, async (req, res) => {
         .eq('id', current.id);
     }
 
-    // Calculate end_date from billing period if not explicitly provided
+    // Calculate end_date from billing period using constants
     let resolvedEndDate = end_date || null;
     if (!resolvedEndDate && billing_period_id) {
-      const { data: period } = await supabase
-        .from('billing_periods').select('months').eq('id', billing_period_id).maybeSingle();
-      if (period?.months) {
+      const months = PERIOD.MONTHS_BY_ID[billing_period_id];
+      if (months) {
         const d = new Date();
-        d.setMonth(d.getMonth() + period.months);
+        d.setMonth(d.getMonth() + months);
         resolvedEndDate = d.toISOString().slice(0, 10);
       }
     }
@@ -150,7 +150,7 @@ router.post('/admin/bakers/:id/subscription', requireAuth, async (req, res) => {
     // Create the new row
     const { error: insertErr } = await supabase.from('baker_subscriptions').insert({
       baker_id:          req.params.id,
-      plan_id:           plan.id,
+      plan_id:           planId,
       billing_period_id: billing_period_id || null,
       status:            status ?? 'active',
       start_date:        today,
@@ -160,13 +160,13 @@ router.post('/admin/bakers/:id/subscription', requireAuth, async (req, res) => {
 
     // Keep subscription_plan_id in sync
     await supabase.from('bakers')
-      .update({ subscription_plan_id: plan.id })
+      .update({ subscription_plan_id: planId })
       .eq('id', req.params.id);
 
     await logSubscriptionEvent(req.params.id, {
       event:          'admin_override',
-      previousTier:   current.plan?.name  ?? null,
-      newTier:        plan.name,
+      previousTier:   current.plan?.name ?? null,
+      newTier:        plan_name,
       previousStatus: current.status,
       newStatus:      status ?? 'active',
       note,

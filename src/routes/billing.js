@@ -5,6 +5,9 @@ import { supabase } from '../services/supabase.js';
 import { requireAuth } from '../middleware/auth.js';
 import { config } from '../config.js';
 import { logSubscriptionEvent, deriveSubscription } from './subscriptions.js';
+import { SUBSCRIPTION_STATUS } from '../constants/subscriptionStatuses.js';
+import { PLAN }                from '../constants/subscriptionPlans.js';
+import { PERIOD }              from '../constants/billingPeriods.js';
 
 const router = Router();
 
@@ -79,19 +82,15 @@ router.post('/billing/subscribe', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'tier and billing_period_id are required' });
     }
 
-    // Fetch billing period from DB
-    const { data: period, error: periodErr } = await supabase
-      .from('billing_periods')
-      .select('id, name, months, display_name')
-      .eq('id', billing_period_id)
-      .eq('is_active', true)
-      .single();
-    if (periodErr || !period) return res.status(400).json({ error: 'Invalid billing period' });
+    const periodName = PERIOD.NAME_BY_ID[billing_period_id];
+    if (!periodName) return res.status(400).json({ error: 'Invalid billing period' });
+    const planId = PLAN.ID_BY_NAME[tier];
+    if (!planId) return res.status(400).json({ error: `Unknown plan: ${tier}` });
 
     // Look up Razorpay plan ID dynamically
-    const razorpayPlanId = getRazorpayPlanId(tier, period.name);
+    const razorpayPlanId = getRazorpayPlanId(tier, periodName);
     if (!razorpayPlanId) {
-      return res.status(400).json({ error: `Razorpay plan not configured for ${tier}/${period.name}` });
+      return res.status(400).json({ error: `Razorpay plan not configured for ${tier}/${periodName}` });
     }
 
     const baker = await getBakerForUser(req.user.id,
@@ -115,8 +114,8 @@ router.post('/billing/subscribe', requireAuth, async (req, res) => {
       } catch {}
     }
 
-    // total_count = ~10 years worth of cycles
-    const totalCount = Math.ceil(120 / period.months);
+    const periodMonths = PERIOD.MONTHS_BY_ID[billing_period_id];
+    const totalCount   = Math.ceil(120 / periodMonths);
     const subscription = await getRazorpay().subscriptions.create({
       plan_id: razorpayPlanId, customer_id: customerId,
       customer_notify: 1, total_count: totalCount, quantity: 1,
@@ -124,11 +123,7 @@ router.post('/billing/subscribe', requireAuth, async (req, res) => {
 
     const today = new Date().toISOString().slice(0, 10);
     const endDate = new Date();
-    endDate.setMonth(endDate.getMonth() + period.months);
-
-    // Fetch plan row for plan_id
-    const { data: plan } = await supabase
-      .from('subscription_plans').select('id').eq('name', tier).maybeSingle();
+    endDate.setMonth(endDate.getMonth() + periodMonths);
 
     // Close any previous active subscription row
     await supabase.from('baker_subscriptions')
@@ -138,8 +133,8 @@ router.post('/billing/subscribe', requireAuth, async (req, res) => {
     // Create new subscription row (pending until webhook confirms)
     await supabase.from('baker_subscriptions').insert({
       baker_id:          baker.id,
-      plan_id:           plan?.id ?? null,
-      billing_period_id: period.id,
+      plan_id:           planId,
+      billing_period_id: billing_period_id,
       status:            'pending',
       start_date:        today,
       end_date:          endDate.toISOString().slice(0, 10),
@@ -148,7 +143,8 @@ router.post('/billing/subscribe', requireAuth, async (req, res) => {
 
     await supabase.from('bakers').update({
       billing_subscription_id: subscription.id,
-      subscription_plan_id:    plan?.id ?? null,
+      subscription_plan_id:    planId,
+      subscription_status_id:  SUBSCRIPTION_STATUS.PENDING,
     }).eq('id', baker.id);
 
     res.json({ subscription_id: subscription.id, key_id: config.razorpay.keyId });
@@ -171,7 +167,10 @@ router.post('/billing/cancel', requireAuth, async (req, res) => {
       .update({ status: 'cancelled', end_date: today })
       .eq('baker_id', baker.id).eq('status', 'active');
 
-    // subscription_status is derived from baker_subscriptions — no bakers update needed
+    // Flip immediately so the next billing cycle doesn't charge
+    await supabase.from('bakers')
+      .update({ subscription_status_id: SUBSCRIPTION_STATUS.CANCELLED })
+      .eq('id', baker.id);
 
     res.json({ ok: true });
   } catch (err) {
@@ -188,8 +187,6 @@ router.post('/billing/activate-spark', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'Already on an active plan' });
     }
 
-    const { data: plan }   = await supabase.from('subscription_plans').select('id').eq('name', 'spark').maybeSingle();
-    const { data: period } = await supabase.from('billing_periods').select('id').eq('name', 'monthly').maybeSingle();
     const today = new Date().toISOString().slice(0, 10);
 
     // Close previous active subscription rows
@@ -200,15 +197,16 @@ router.post('/billing/activate-spark', requireAuth, async (req, res) => {
     // Spark has no end date — it's free and ongoing
     await supabase.from('baker_subscriptions').insert({
       baker_id:          baker.id,
-      plan_id:           plan?.id ?? null,
-      billing_period_id: period?.id ?? null,
+      plan_id:           PLAN.SPARK,
+      billing_period_id: PERIOD.MONTHLY,
       status:            'active',
       start_date:        today,
       end_date:          null,
     });
 
     await supabase.from('bakers').update({
-      subscription_plan_id: plan?.id ?? null,
+      subscription_plan_id:   PLAN.SPARK,
+      subscription_status_id: SUBSCRIPTION_STATUS.ACTIVE,
     }).eq('id', baker.id);
 
     await logSubscriptionEvent(baker.id, {
@@ -246,21 +244,24 @@ router.post('/billing/webhook', async (req, res) => {
     if (!subRow) return res.json({ ok: true });
 
     const STATUS_MAP = {
-      'subscription.activated': 'active',
-      'subscription.charged':   'active',
-      'subscription.resumed':   'active',
-      'subscription.paused':    'paused',
-      'subscription.cancelled': 'cancelled',
-      'subscription.completed': 'cancelled',
-      'payment.failed':         'past_due',
+      'subscription.activated': { status: 'active',    statusId: SUBSCRIPTION_STATUS.ACTIVE    },
+      'subscription.charged':   { status: 'active',    statusId: SUBSCRIPTION_STATUS.ACTIVE    },
+      'subscription.resumed':   { status: 'active',    statusId: SUBSCRIPTION_STATUS.ACTIVE    },
+      'subscription.paused':    { status: 'paused',    statusId: SUBSCRIPTION_STATUS.PAUSED    },
+      'subscription.cancelled': { status: 'cancelled', statusId: SUBSCRIPTION_STATUS.CANCELLED },
+      'subscription.completed': { status: 'cancelled', statusId: SUBSCRIPTION_STATUS.CANCELLED },
+      'payment.failed':         { status: 'past_due',  statusId: SUBSCRIPTION_STATUS.PAST_DUE  },
     };
 
-    const newStatus = STATUS_MAP[event];
-    if (newStatus) {
+    const mapped = STATUS_MAP[event];
+    if (mapped) {
       const today = new Date().toISOString().slice(0, 10);
-      const update = { status: newStatus };
-      if (['cancelled', 'paused'].includes(newStatus)) update.end_date = today;
-      await supabase.from('baker_subscriptions').update(update).eq('id', subRow.id);
+      const subUpdate = { status: mapped.status };
+      if (['cancelled', 'paused'].includes(mapped.status)) subUpdate.end_date = today;
+      await supabase.from('baker_subscriptions').update(subUpdate).eq('id', subRow.id);
+      await supabase.from('bakers')
+        .update({ subscription_status_id: mapped.statusId })
+        .eq('id', subRow.baker_id);
     }
 
     res.json({ ok: true });

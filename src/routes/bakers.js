@@ -4,6 +4,9 @@ import { supabase } from '../services/supabase.js';
 import { requireAuth } from '../middleware/auth.js';
 import { config } from '../config.js';
 import { logSubscriptionEvent, deriveSubscription } from './subscriptions.js';
+import { PLAN }                from '../constants/subscriptionPlans.js';
+import { PERIOD }              from '../constants/billingPeriods.js';
+import { SUBSCRIPTION_STATUS } from '../constants/subscriptionStatuses.js';
 
 function toPublicUrl(key) {
   if (!key) return null;
@@ -95,31 +98,24 @@ router.post('/admin/bakers', requireAuth, async (req, res) => {
     }
 
     // Start baker on Spark (free, 30 days)
-    const [{ data: sparkPlan, error: planErr }, { data: sparkPeriod }] = await Promise.all([
-      supabase.from('subscription_plans').select('id').eq('name', 'spark').maybeSingle(),
-      supabase.from('billing_periods').select('id').eq('name', 'monthly').maybeSingle(),
-    ]);
-    if (planErr) console.error('Could not find spark plan:', planErr.message);
-
     const today    = new Date().toISOString().slice(0, 10);
     const sparkEnd = new Date();
     sparkEnd.setDate(sparkEnd.getDate() + 30);
 
     const { error: subErr } = await supabase.from('baker_subscriptions').insert({
       baker_id:          data.id,
-      plan_id:           sparkPlan?.id ?? null,
-      billing_period_id: sparkPeriod?.id ?? null,
+      plan_id:           PLAN.SPARK,
+      billing_period_id: PERIOD.MONTHLY,
       status:            'active',
       start_date:        today,
       end_date:          sparkEnd.toISOString().slice(0, 10),
     });
     if (subErr) console.error('baker_subscriptions insert failed:', subErr.message);
 
-    if (sparkPlan) {
-      await supabase.from('bakers')
-        .update({ subscription_plan_id: sparkPlan.id })
-        .eq('id', data.id);
-    }
+    await supabase.from('bakers').update({
+      subscription_plan_id:   PLAN.SPARK,
+      subscription_status_id: SUBSCRIPTION_STATUS.ACTIVE,
+    }).eq('id', data.id);
 
     await logSubscriptionEvent(data.id, {
       event: 'activated', newTier: 'spark', newStatus: 'active', changedBy: 'system',

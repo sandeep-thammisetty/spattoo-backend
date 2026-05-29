@@ -21,15 +21,20 @@ function getRazorpay() {
 }
 
 const PLANS = {
-  starter: {
-    name:    'Starter',
-    monthly: config.razorpay.plans.starterMonthly,
-    yearly:  config.razorpay.plans.starterYearly,
+  flame: {
+    name:    'Flame',
+    monthly: config.razorpay.plans.flameMonthly,
+    yearly:  config.razorpay.plans.flameYearly,
   },
-  pro: {
-    name:    'Pro',
-    monthly: config.razorpay.plans.proMonthly,
-    yearly:  config.razorpay.plans.proYearly,
+  blaze: {
+    name:    'Blaze',
+    monthly: config.razorpay.plans.blazeMonthly,
+    yearly:  config.razorpay.plans.blazeYearly,
+  },
+  forge: {
+    name:    'Forge',
+    monthly: config.razorpay.plans.forgeMonthly,
+    yearly:  config.razorpay.plans.forgeYearly,
   },
 };
 
@@ -139,6 +144,27 @@ router.post('/billing/cancel', requireAuth, async (req, res) => {
     await getRazorpay().subscriptions.cancel(baker.billing_subscription_id, { cancel_at_cycle_end: 1 });
     await supabase.from('bakers').update({ subscription_status: 'cancelled' }).eq('id', baker.id);
 
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── POST /billing/activate-spark ─────────────────────────────────────────────
+// Activates the free Spark tier — no payment required.
+router.post('/billing/activate-spark', requireAuth, async (req, res) => {
+  try {
+    const baker = await getBakerForUser(req.user.id, 'id, subscription_tier, subscription_status');
+    if (!baker) return res.status(404).json({ error: 'Baker not found' });
+    if (baker.subscription_status === 'active' && baker.subscription_tier !== 'trial') {
+      return res.status(400).json({ error: 'Already on an active plan' });
+    }
+    await supabase.from('bakers').update({ subscription_tier: 'spark', subscription_status: 'active' }).eq('id', baker.id);
+    const { logSubscriptionEvent } = await import('./subscriptions.js');
+    await logSubscriptionEvent(baker.id, {
+      event: 'activated', previousTier: baker.subscription_tier, newTier: 'spark',
+      previousStatus: baker.subscription_status, newStatus: 'active', changedBy: 'baker',
+    });
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });

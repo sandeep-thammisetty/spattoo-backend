@@ -137,6 +137,8 @@ router.get('/baker/profile', requireAuth, async (req, res) => {
         primary_color: baker.primary_color, accent_color: baker.accent_color,
         instagram_handle: baker.instagram_handle, website_url: baker.website_url,
         tagline: baker.tagline,
+        subscription_status: baker.subscription_status,
+        trial_ends_at:       baker.trial_ends_at,
       },
       user: { firstName: contact.first_name, lastName: contact.last_name, email: req.user.email },
     });

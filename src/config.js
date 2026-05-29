@@ -38,10 +38,12 @@ export const config = {
     webhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET,
     plans: {
       // Set these in Render after creating plans in Razorpay dashboard
-      starterMonthly: process.env.RAZORPAY_PLAN_STARTER_MONTHLY,
-      starterYearly:  process.env.RAZORPAY_PLAN_STARTER_YEARLY,
-      proMonthly:     process.env.RAZORPAY_PLAN_PRO_MONTHLY,
-      proYearly:      process.env.RAZORPAY_PLAN_PRO_YEARLY,
+      flameMonthly: process.env.RAZORPAY_PLAN_FLAME_MONTHLY,
+      flameYearly:  process.env.RAZORPAY_PLAN_FLAME_YEARLY,
+      blazeMonthly: process.env.RAZORPAY_PLAN_BLAZE_MONTHLY,
+      blazeYearly:  process.env.RAZORPAY_PLAN_BLAZE_YEARLY,
+      forgeMonthly: process.env.RAZORPAY_PLAN_FORGE_MONTHLY,
+      forgeYearly:  process.env.RAZORPAY_PLAN_FORGE_YEARLY,
     },
   },
   port:     parseInt(process.env.PORT || '3000', 10),

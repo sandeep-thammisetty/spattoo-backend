@@ -31,18 +31,30 @@ function getRazorpayPlanId(tier, periodName) {
 }
 
 async function getBakerForUser(userId, fields = 'id, name, email, subscription_tier, subscription_status, trial_ends_at') {
-  const { data: contact } = await supabase
+  const { data: contact, error: contactErr } = await supabase
     .from('baker_appusers').select('baker_id')
     .eq('auth_user_id', userId).maybeSingle();
+  if (contactErr) console.error('getBakerForUser: baker_appusers lookup failed:', contactErr.message, '| userId:', userId);
+  if (!contact)   console.error('getBakerForUser: no baker_appusers row for userId:', userId);
   if (!contact) return null;
-  const { data: baker, error } = await supabase
+  const { data: baker, error: bakerErr } = await supabase
     .from('bakers').select(fields).eq('id', contact.baker_id).single();
-  if (error) console.error('getBakerForUser failed:', error.message, '| fields:', fields);
+  if (bakerErr) console.error('getBakerForUser: bakers lookup failed:', bakerErr.message, '| fields:', fields, '| baker_id:', contact.baker_id);
   return baker ?? null;
 }
 
-// ── GET /billing/ping (debug — remove after confirming router loads) ──────────
+// ── GET /billing/ping (debug) ─────────────────────────────────────────────────
 router.get('/billing/ping', (req, res) => res.json({ ok: true, ts: Date.now() }));
+
+// ── GET /billing/debug-me (debug) ────────────────────────────────────────────
+router.get('/billing/debug-me', requireAuth, async (req, res) => {
+  const { data: contact, error: cErr } = await supabase
+    .from('baker_appusers').select('baker_id').eq('auth_user_id', req.user.id).maybeSingle();
+  if (cErr || !contact) return res.json({ user_id: req.user.id, contact: null, contact_error: cErr?.message ?? 'no row' });
+  const { data: baker, error: bErr } = await supabase
+    .from('bakers').select('id, subscription_status, billing_subscription_id').eq('id', contact.baker_id).single();
+  res.json({ user_id: req.user.id, baker_id: contact.baker_id, baker, baker_error: bErr?.message ?? null });
+});
 
 // ── GET /billing/periods ──────────────────────────────────────────────────────
 router.get('/billing/periods', requireAuth, async (req, res) => {

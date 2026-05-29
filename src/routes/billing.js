@@ -33,15 +33,13 @@ const PLANS = {
   },
 };
 
-async function getBakerForUser(userId) {
+async function getBakerForUser(userId, fields = 'id, name, email, subscription_tier, subscription_status, trial_ends_at') {
   const { data: contact } = await supabase
     .from('baker_appusers').select('baker_id')
     .eq('auth_user_id', userId).maybeSingle();
   if (!contact) return null;
   const { data: baker } = await supabase
-    .from('bakers')
-    .select('id, name, email, subscription_tier, subscription_status, trial_ends_at, billing_customer_id, billing_subscription_id')
-    .eq('id', contact.baker_id).single();
+    .from('bakers').select(fields).eq('id', contact.baker_id).single();
   return baker;
 }
 
@@ -84,7 +82,7 @@ router.post('/billing/subscribe', requireAuth, async (req, res) => {
     const planId = PLANS[tier][period];
     if (!planId) return res.status(400).json({ error: `Plan not configured: ${tier}/${period}` });
 
-    const baker = await getBakerForUser(req.user.id);
+    const baker = await getBakerForUser(req.user.id, 'id, name, email, subscription_tier, subscription_status, trial_ends_at, billing_customer_id, billing_subscription_id');
     if (!baker) return res.status(404).json({ error: 'Baker not found' });
 
     // Get or create Razorpay customer
@@ -134,7 +132,7 @@ router.post('/billing/subscribe', requireAuth, async (req, res) => {
 // Cancels at end of current billing cycle.
 router.post('/billing/cancel', requireAuth, async (req, res) => {
   try {
-    const baker = await getBakerForUser(req.user.id);
+    const baker = await getBakerForUser(req.user.id, 'id, subscription_status, billing_subscription_id');
     if (!baker) return res.status(404).json({ error: 'Baker not found' });
     if (!baker.billing_subscription_id) return res.status(400).json({ error: 'No active subscription' });
 

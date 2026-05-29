@@ -26,37 +26,23 @@ export async function logSubscriptionEvent(bakerId, {
 // Returns the baker's current subscription with derived status.
 // Status is derived: if end_date is in the past and status is 'active' → 'expired'.
 export async function deriveSubscription(bakerId) {
-  const { data } = await supabase
-    .from('baker_subscriptions')
-    .select('id, status, end_date, start_date, billing_subscription_id, plan_id, billing_period_id')
-    .eq('baker_id', bakerId)
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  const { data, error } = await supabase.rpc('get_baker_subscription', { p_baker_id: bakerId });
+  if (error) {
+    console.error('deriveSubscription rpc failed:', error.message);
+    return { status: 'no_subscription', plan: null, end_date: null, id: null };
+  }
 
-  if (!data) return { status: 'no_subscription', plan: null, end_date: null, id: null };
-
-  // Fetch plan and period separately
-  const [{ data: plan }, { data: period }] = await Promise.all([
-    data.plan_id
-      ? supabase.from('subscription_plans').select('id, name, display_name').eq('id', data.plan_id).maybeSingle()
-      : Promise.resolve({ data: null }),
-    data.billing_period_id
-      ? supabase.from('billing_periods').select('name, display_name').eq('id', data.billing_period_id).maybeSingle()
-      : Promise.resolve({ data: null }),
-  ]);
-
-  const isExpired = data.end_date && new Date(data.end_date) < new Date();
-  const status    = isExpired && data.status === 'active' ? 'expired' : data.status;
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row) return { status: 'no_subscription', plan: null, end_date: null, id: null };
 
   return {
-    id:         data.id,
-    status,
-    plan:       plan   ?? null,
-    period:     period ?? null,
-    end_date:   data.end_date,
-    start_date: data.start_date,
-    billing_subscription_id: data.billing_subscription_id,
+    id:         row.id,
+    status:     row.derived_status,
+    plan:       row.plan_id ? { id: row.plan_id, name: row.plan_name, display_name: row.plan_display_name } : null,
+    period:     row.period_name ? { name: row.period_name, display_name: row.period_display_name } : null,
+    end_date:   row.end_date,
+    start_date: row.start_date,
+    billing_subscription_id: row.billing_subscription_id,
   };
 }
 
@@ -103,46 +89,9 @@ router.patch('/admin/subscription-plans/:id', requireAuth, async (req, res) => {
 // ── GET /admin/bakers/subscriptions ───────────────────────────────────────────
 router.get('/admin/bakers/subscriptions', requireAuth, async (req, res) => {
   try {
-    // Two separate queries — avoids relying on FK relationships being defined in Supabase
-    const [{ data: bakers, error: bakersErr }, { data: subs }] = await Promise.all([
-      supabase.from('bakers')
-        .select('id, name, slug, email, created_at')
-        .order('created_at', { ascending: false }),
-      supabase.from('baker_subscriptions')
-        .select('baker_id, status, end_date, created_at, plan_id'),
-    ]);
-    if (bakersErr) return res.status(500).json({ error: bakersErr.message });
-
-    // Fetch plan names
-    const { data: plans } = await supabase
-      .from('subscription_plans').select('id, name, display_name');
-    const planMap = Object.fromEntries((plans ?? []).map(p => [p.id, p]));
-
-    // Group subscriptions by baker_id, pick the latest
-    const subMap = {};
-    for (const s of (subs ?? [])) {
-      const existing = subMap[s.baker_id];
-      if (!existing || new Date(s.created_at) > new Date(existing.created_at)) {
-        subMap[s.baker_id] = s;
-      }
-    }
-
-    const today = new Date();
-    const result = (bakers ?? []).map(b => {
-      const latest = subMap[b.id] ?? null;
-      const isExpired = latest?.end_date && new Date(latest.end_date) < today;
-      const status = latest
-        ? (isExpired && latest.status === 'active' ? 'expired' : latest.status)
-        : 'no_subscription';
-      return {
-        id: b.id, name: b.name, slug: b.slug, email: b.email, created_at: b.created_at,
-        subscription_plan:   latest ? (planMap[latest.plan_id]?.name ?? null) : null,
-        subscription_status: status,
-        end_date:            latest?.end_date ?? null,
-      };
-    });
-
-    res.json(result);
+    const { data, error } = await supabase.rpc('get_baker_subscriptions_admin');
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data ?? []);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

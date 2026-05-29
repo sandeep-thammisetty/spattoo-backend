@@ -41,6 +41,9 @@ async function getBakerForUser(userId, fields = 'id, name, email, subscription_t
   return baker ?? null;
 }
 
+// ── GET /billing/ping (debug — remove after confirming router loads) ──────────
+router.get('/billing/ping', (req, res) => res.json({ ok: true, ts: Date.now() }));
+
 // ── GET /billing/periods ──────────────────────────────────────────────────────
 router.get('/billing/periods', requireAuth, async (req, res) => {
   try {

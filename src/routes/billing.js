@@ -7,10 +7,18 @@ import { config } from '../config.js';
 
 const router = Router();
 
-const razorpay = new Razorpay({
-  key_id:     config.razorpay.keyId,
-  key_secret: config.razorpay.keySecret,
-});
+// Lazily initialised — only created when a billing route is called.
+// Prevents startup crash when Razorpay env vars are not yet configured.
+let _razorpay = null;
+function getRazorpay() {
+  if (!config.razorpay.keyId || !config.razorpay.keySecret) {
+    throw new Error('Razorpay is not configured. Set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET in the environment.');
+  }
+  if (!_razorpay) {
+    _razorpay = new Razorpay({ key_id: config.razorpay.keyId, key_secret: config.razorpay.keySecret });
+  }
+  return _razorpay;
+}
 
 const PLANS = {
   starter: {
@@ -46,7 +54,7 @@ router.get('/billing/status', requireAuth, async (req, res) => {
     let nextBillingAt = null;
     if (baker.billing_subscription_id) {
       try {
-        const sub = await razorpay.subscriptions.fetch(baker.billing_subscription_id);
+        const sub = await getRazorpay().subscriptions.fetch(baker.billing_subscription_id);
         if (sub.charge_at) nextBillingAt = new Date(sub.charge_at * 1000).toISOString();
       } catch {}
     }
@@ -82,7 +90,7 @@ router.post('/billing/subscribe', requireAuth, async (req, res) => {
     // Get or create Razorpay customer
     let customerId = baker.billing_customer_id;
     if (!customerId) {
-      const customer = await razorpay.customers.create({
+      const customer = await getRazorpay().customers.create({
         name:  baker.name,
         email: baker.email || undefined,
         fail_existing: 0,
@@ -94,12 +102,12 @@ router.post('/billing/subscribe', requireAuth, async (req, res) => {
     // Cancel any existing active subscription first
     if (baker.billing_subscription_id) {
       try {
-        await razorpay.subscriptions.cancel(baker.billing_subscription_id, { cancel_at_cycle_end: 0 });
+        await getRazorpay().subscriptions.cancel(baker.billing_subscription_id, { cancel_at_cycle_end: 0 });
       } catch {}
     }
 
     const totalCount = period === 'yearly' ? 10 : 120; // 10 years or 120 months max
-    const subscription = await razorpay.subscriptions.create({
+    const subscription = await getRazorpay().subscriptions.create({
       plan_id:         planId,
       customer_id:     customerId,
       customer_notify: 1,
@@ -130,7 +138,7 @@ router.post('/billing/cancel', requireAuth, async (req, res) => {
     if (!baker) return res.status(404).json({ error: 'Baker not found' });
     if (!baker.billing_subscription_id) return res.status(400).json({ error: 'No active subscription' });
 
-    await razorpay.subscriptions.cancel(baker.billing_subscription_id, { cancel_at_cycle_end: 1 });
+    await getRazorpay().subscriptions.cancel(baker.billing_subscription_id, { cancel_at_cycle_end: 1 });
     await supabase.from('bakers').update({ subscription_status: 'cancelled' }).eq('id', baker.id);
 
     res.json({ ok: true });

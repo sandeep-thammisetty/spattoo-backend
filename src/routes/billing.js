@@ -189,7 +189,7 @@ router.post('/billing/activate-spark', requireAuth, async (req, res) => {
     }
 
     const { data: plan }   = await supabase.from('subscription_plans').select('id').eq('name', 'spark').maybeSingle();
-    const { data: period } = await supabase.from('billing_periods').select('id').eq('name', 'monthly').maybeSingle();
+    const { data: period } = await supabase.from('billing_periods').select('id').eq('name', 'spark').maybeSingle();
     const today = new Date().toISOString().slice(0, 10);
 
     // Close previous active subscription rows

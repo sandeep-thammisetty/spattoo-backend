@@ -95,8 +95,10 @@ router.post('/admin/bakers', requireAuth, async (req, res) => {
     }
 
     // Start baker on Spark (free, 30 days)
-    const { data: sparkPlan, error: planErr } = await supabase
-      .from('subscription_plans').select('id').eq('name', 'spark').maybeSingle();
+    const [{ data: sparkPlan, error: planErr }, { data: sparkPeriod }] = await Promise.all([
+      supabase.from('subscription_plans').select('id').eq('name', 'spark').maybeSingle(),
+      supabase.from('billing_periods').select('id').eq('name', 'spark').maybeSingle(),
+    ]);
     if (planErr) console.error('Could not find spark plan:', planErr.message);
 
     const today    = new Date().toISOString().slice(0, 10);
@@ -104,11 +106,12 @@ router.post('/admin/bakers', requireAuth, async (req, res) => {
     sparkEnd.setDate(sparkEnd.getDate() + 30);
 
     const { error: subErr } = await supabase.from('baker_subscriptions').insert({
-      baker_id:   data.id,
-      plan_id:    sparkPlan?.id ?? null,
-      status:     'active',
-      start_date: today,
-      end_date:   sparkEnd.toISOString().slice(0, 10),
+      baker_id:          data.id,
+      plan_id:           sparkPlan?.id ?? null,
+      billing_period_id: sparkPeriod?.id ?? null,
+      status:            'active',
+      start_date:        today,
+      end_date:          sparkEnd.toISOString().slice(0, 10),
     });
     if (subErr) console.error('baker_subscriptions insert failed:', subErr.message);
 

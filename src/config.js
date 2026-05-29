@@ -36,15 +36,8 @@ export const config = {
     keyId:         process.env.RAZORPAY_KEY_ID,
     keySecret:     process.env.RAZORPAY_KEY_SECRET,
     webhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET,
-    plans: {
-      // Set these in Render after creating plans in Razorpay dashboard
-      flameMonthly: process.env.RAZORPAY_PLAN_FLAME_MONTHLY,
-      flameYearly:  process.env.RAZORPAY_PLAN_FLAME_YEARLY,
-      blazeMonthly: process.env.RAZORPAY_PLAN_BLAZE_MONTHLY,
-      blazeYearly:  process.env.RAZORPAY_PLAN_BLAZE_YEARLY,
-      forgeMonthly: process.env.RAZORPAY_PLAN_FORGE_MONTHLY,
-      forgeYearly:  process.env.RAZORPAY_PLAN_FORGE_YEARLY,
-    },
+    // Plan IDs are read dynamically from env using RAZORPAY_PLAN_{TIER}_{PERIOD}
+    // e.g. RAZORPAY_PLAN_FLAME_MONTHLY, RAZORPAY_PLAN_BLAZE_QUARTERLY, etc.
   },
   port:     parseInt(process.env.PORT || '3000', 10),
 };

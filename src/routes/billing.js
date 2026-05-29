@@ -4,15 +4,15 @@ import crypto from 'crypto';
 import { supabase } from '../services/supabase.js';
 import { requireAuth } from '../middleware/auth.js';
 import { config } from '../config.js';
+import { logSubscriptionEvent } from './subscriptions.js';
 
 const router = Router();
 
-// Lazily initialised — only created when a billing route is called.
-// Prevents startup crash when Razorpay env vars are not yet configured.
+// Lazily initialised — prevents startup crash when env vars not yet configured.
 let _razorpay = null;
 function getRazorpay() {
   if (!config.razorpay.keyId || !config.razorpay.keySecret) {
-    throw new Error('Razorpay is not configured. Set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET in the environment.');
+    throw new Error('Razorpay is not configured. Set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET.');
   }
   if (!_razorpay) {
     _razorpay = new Razorpay({ key_id: config.razorpay.keyId, key_secret: config.razorpay.keySecret });
@@ -20,23 +20,12 @@ function getRazorpay() {
   return _razorpay;
 }
 
-const PLANS = {
-  flame: {
-    name:    'Flame',
-    monthly: config.razorpay.plans.flameMonthly,
-    yearly:  config.razorpay.plans.flameYearly,
-  },
-  blaze: {
-    name:    'Blaze',
-    monthly: config.razorpay.plans.blazeMonthly,
-    yearly:  config.razorpay.plans.blazeYearly,
-  },
-  forge: {
-    name:    'Forge',
-    monthly: config.razorpay.plans.forgeMonthly,
-    yearly:  config.razorpay.plans.forgeYearly,
-  },
-};
+// Dynamic plan ID lookup — no code changes needed when adding tiers or periods.
+// Convention: RAZORPAY_PLAN_{TIER}_{PERIOD} e.g. RAZORPAY_PLAN_FLAME_QUARTERLY
+function getRazorpayPlanId(tier, periodName) {
+  const key = `RAZORPAY_PLAN_${tier.toUpperCase()}_${periodName.toUpperCase()}`;
+  return process.env[key] ?? null;
+}
 
 async function getBakerForUser(userId, fields = 'id, name, email, subscription_tier, subscription_status, trial_ends_at') {
   const { data: contact } = await supabase
@@ -48,26 +37,44 @@ async function getBakerForUser(userId, fields = 'id, name, email, subscription_t
   return baker;
 }
 
+// ── GET /billing/periods ──────────────────────────────────────────────────────
+router.get('/billing/periods', requireAuth, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('billing_periods')
+      .select('id, name, display_name, months, discount_pct')
+      .eq('is_active', true)
+      .order('sort_order');
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── GET /billing/status ───────────────────────────────────────────────────────
 router.get('/billing/status', requireAuth, async (req, res) => {
   try {
-    const baker = await getBakerForUser(req.user.id);
+    const baker = await getBakerForUser(req.user.id,
+      'id, subscription_tier, subscription_status, trial_ends_at, subscription_plan_id');
     if (!baker) return res.status(404).json({ error: 'Baker not found' });
 
-    let nextBillingAt = null;
-    if (baker.billing_subscription_id) {
-      try {
-        const sub = await getRazorpay().subscriptions.fetch(baker.billing_subscription_id);
-        if (sub.charge_at) nextBillingAt = new Date(sub.charge_at * 1000).toISOString();
-      } catch {}
-    }
+    // Fetch active baker_subscription for next billing date
+    const { data: activeSub } = await supabase
+      .from('baker_subscriptions')
+      .select('end_date, billing_period_id, billing_periods(display_name)')
+      .eq('baker_id', baker.id)
+      .eq('status', 'active')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
 
     res.json({
-      tier:                     baker.subscription_tier,
-      status:                   baker.subscription_status,
-      trial_ends_at:            baker.trial_ends_at,
-      billing_subscription_id: baker.billing_subscription_id,
-      next_billing_at:          nextBillingAt,
+      tier:           baker.subscription_tier,
+      status:         baker.subscription_status,
+      trial_ends_at:  baker.trial_ends_at,
+      next_billing_at: activeSub?.end_date ?? null,
+      billing_period:  activeSub?.billing_periods?.display_name ?? null,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -75,66 +82,94 @@ router.get('/billing/status', requireAuth, async (req, res) => {
 });
 
 // ── POST /billing/subscribe ───────────────────────────────────────────────────
-// Creates a Razorpay subscription and returns the id + key for the frontend
-// to open Razorpay Checkout.
 router.post('/billing/subscribe', requireAuth, async (req, res) => {
   try {
-    const { tier, period } = req.body;
-
-    if (!PLANS[tier] || !['monthly', 'yearly'].includes(period)) {
-      return res.status(400).json({ error: 'Invalid tier or period' });
+    const { tier, billing_period_id } = req.body;
+    if (!tier || !billing_period_id) {
+      return res.status(400).json({ error: 'tier and billing_period_id are required' });
     }
-    const planId = PLANS[tier][period];
-    if (!planId) return res.status(400).json({ error: `Plan not configured: ${tier}/${period}` });
 
-    const baker = await getBakerForUser(req.user.id, 'id, name, email, subscription_tier, subscription_status, trial_ends_at, billing_customer_id, billing_subscription_id');
+    // Fetch billing period from DB
+    const { data: period, error: periodErr } = await supabase
+      .from('billing_periods')
+      .select('id, name, months, display_name')
+      .eq('id', billing_period_id)
+      .eq('is_active', true)
+      .single();
+    if (periodErr || !period) return res.status(400).json({ error: 'Invalid billing period' });
+
+    // Look up Razorpay plan ID dynamically
+    const razorpayPlanId = getRazorpayPlanId(tier, period.name);
+    if (!razorpayPlanId) {
+      return res.status(400).json({ error: `Razorpay plan not configured for ${tier}/${period.name}` });
+    }
+
+    const baker = await getBakerForUser(req.user.id,
+      'id, name, email, subscription_tier, subscription_status, billing_customer_id, billing_subscription_id');
     if (!baker) return res.status(404).json({ error: 'Baker not found' });
 
     // Get or create Razorpay customer
     let customerId = baker.billing_customer_id;
     if (!customerId) {
       const customer = await getRazorpay().customers.create({
-        name:  baker.name,
-        email: baker.email || undefined,
-        fail_existing: 0,
+        name: baker.name, email: baker.email || undefined, fail_existing: 0,
       });
       customerId = customer.id;
       await supabase.from('bakers').update({ billing_customer_id: customerId }).eq('id', baker.id);
     }
 
-    // Cancel any existing active subscription first
+    // Cancel existing active Razorpay subscription if any
     if (baker.billing_subscription_id) {
       try {
         await getRazorpay().subscriptions.cancel(baker.billing_subscription_id, { cancel_at_cycle_end: 0 });
       } catch {}
     }
 
-    const totalCount = period === 'yearly' ? 10 : 120; // 10 years or 120 months max
+    // total_count = ~10 years worth of cycles
+    const totalCount = Math.ceil(120 / period.months);
     const subscription = await getRazorpay().subscriptions.create({
-      plan_id:         planId,
-      customer_id:     customerId,
-      customer_notify: 1,
-      total_count:     totalCount,
-      quantity:        1,
+      plan_id: razorpayPlanId, customer_id: customerId,
+      customer_notify: 1, total_count: totalCount, quantity: 1,
+    });
+
+    const today = new Date().toISOString().slice(0, 10);
+    const endDate = new Date();
+    endDate.setMonth(endDate.getMonth() + period.months);
+
+    // Fetch plan row for plan_id
+    const { data: plan } = await supabase
+      .from('subscription_plans').select('id').eq('name', tier).maybeSingle();
+
+    // Close any previous active subscription row
+    await supabase.from('baker_subscriptions')
+      .update({ status: 'cancelled', end_date: today })
+      .eq('baker_id', baker.id).eq('status', 'active');
+
+    // Create new subscription row (pending until webhook confirms)
+    await supabase.from('baker_subscriptions').insert({
+      baker_id:          baker.id,
+      plan_id:           plan?.id ?? null,
+      billing_period_id: period.id,
+      status:            'pending',
+      start_date:        today,
+      end_date:          endDate.toISOString().slice(0, 10),
+      billing_subscription_id: subscription.id,
     });
 
     await supabase.from('bakers').update({
       billing_subscription_id: subscription.id,
-      subscription_tier:        tier,
-      subscription_status:      'pending',
+      subscription_tier:       tier,
+      subscription_plan_id:    plan?.id ?? null,
+      subscription_status:     'pending',
     }).eq('id', baker.id);
 
-    res.json({
-      subscription_id: subscription.id,
-      key_id:          config.razorpay.keyId,
-    });
+    res.json({ subscription_id: subscription.id, key_id: config.razorpay.keyId });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
 // ── POST /billing/cancel ──────────────────────────────────────────────────────
-// Cancels at end of current billing cycle.
 router.post('/billing/cancel', requireAuth, async (req, res) => {
   try {
     const baker = await getBakerForUser(req.user.id, 'id, subscription_status, billing_subscription_id');
@@ -142,7 +177,14 @@ router.post('/billing/cancel', requireAuth, async (req, res) => {
     if (!baker.billing_subscription_id) return res.status(400).json({ error: 'No active subscription' });
 
     await getRazorpay().subscriptions.cancel(baker.billing_subscription_id, { cancel_at_cycle_end: 1 });
-    await supabase.from('bakers').update({ subscription_status: 'cancelled' }).eq('id', baker.id);
+
+    const today = new Date().toISOString().slice(0, 10);
+    await supabase.from('baker_subscriptions')
+      .update({ status: 'cancelled', end_date: today })
+      .eq('baker_id', baker.id).eq('status', 'active');
+
+    await supabase.from('bakers')
+      .update({ subscription_status: 'cancelled' }).eq('id', baker.id);
 
     res.json({ ok: true });
   } catch (err) {
@@ -151,7 +193,6 @@ router.post('/billing/cancel', requireAuth, async (req, res) => {
 });
 
 // ── POST /billing/activate-spark ─────────────────────────────────────────────
-// Activates the free Spark tier — no payment required.
 router.post('/billing/activate-spark', requireAuth, async (req, res) => {
   try {
     const baker = await getBakerForUser(req.user.id, 'id, subscription_tier, subscription_status');
@@ -159,12 +200,37 @@ router.post('/billing/activate-spark', requireAuth, async (req, res) => {
     if (baker.subscription_status === 'active' && baker.subscription_tier !== 'trial') {
       return res.status(400).json({ error: 'Already on an active plan' });
     }
-    await supabase.from('bakers').update({ subscription_tier: 'spark', subscription_status: 'active' }).eq('id', baker.id);
-    const { logSubscriptionEvent } = await import('./subscriptions.js');
+
+    const { data: plan }   = await supabase.from('subscription_plans').select('id').eq('name', 'spark').maybeSingle();
+    const { data: period } = await supabase.from('billing_periods').select('id').eq('name', 'monthly').maybeSingle();
+    const today = new Date().toISOString().slice(0, 10);
+
+    // Close previous active subscription rows
+    await supabase.from('baker_subscriptions')
+      .update({ status: 'cancelled', end_date: today })
+      .eq('baker_id', baker.id).eq('status', 'active');
+
+    // Spark has no end date — it's free and ongoing
+    await supabase.from('baker_subscriptions').insert({
+      baker_id:          baker.id,
+      plan_id:           plan?.id ?? null,
+      billing_period_id: period?.id ?? null,
+      status:            'active',
+      start_date:        today,
+      end_date:          null,
+    });
+
+    await supabase.from('bakers').update({
+      subscription_tier:    'spark',
+      subscription_plan_id: plan?.id ?? null,
+      subscription_status:  'active',
+    }).eq('id', baker.id);
+
     await logSubscriptionEvent(baker.id, {
       event: 'activated', previousTier: baker.subscription_tier, newTier: 'spark',
       previousStatus: baker.subscription_status, newStatus: 'active', changedBy: 'baker',
     });
+
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -172,31 +238,25 @@ router.post('/billing/activate-spark', requireAuth, async (req, res) => {
 });
 
 // ── POST /billing/webhook ─────────────────────────────────────────────────────
-// Raw body required for signature verification — mounted with express.raw() in server.js.
 router.post('/billing/webhook', async (req, res) => {
   try {
     const signature = req.headers['x-razorpay-signature'];
-    const rawBody   = req.body; // Buffer when using express.raw()
+    const rawBody   = req.body;
 
     const expected = crypto
       .createHmac('sha256', config.razorpay.webhookSecret)
-      .update(rawBody)
-      .digest('hex');
+      .update(rawBody).digest('hex');
 
-    if (signature !== expected) {
-      return res.status(400).json({ error: 'Invalid signature' });
-    }
+    if (signature !== expected) return res.status(400).json({ error: 'Invalid signature' });
 
     const payload = JSON.parse(rawBody.toString());
     const { event } = payload;
     const sub = payload?.payload?.subscription?.entity;
-
     if (!sub?.id) return res.json({ ok: true });
 
     const { data: baker } = await supabase
       .from('bakers').select('id')
       .eq('billing_subscription_id', sub.id).maybeSingle();
-
     if (!baker) return res.json({ ok: true });
 
     const STATUS_MAP = {
@@ -212,6 +272,20 @@ router.post('/billing/webhook', async (req, res) => {
     const newStatus = STATUS_MAP[event];
     if (newStatus) {
       await supabase.from('bakers').update({ subscription_status: newStatus }).eq('id', baker.id);
+
+      // Sync baker_subscriptions row
+      if (newStatus === 'active') {
+        await supabase.from('baker_subscriptions')
+          .update({ status: 'active' })
+          .eq('baker_id', baker.id)
+          .eq('billing_subscription_id', sub.id);
+      } else if (['cancelled', 'paused'].includes(newStatus)) {
+        const today = new Date().toISOString().slice(0, 10);
+        await supabase.from('baker_subscriptions')
+          .update({ status: newStatus, end_date: today })
+          .eq('baker_id', baker.id)
+          .eq('billing_subscription_id', sub.id);
+      }
     }
 
     res.json({ ok: true });

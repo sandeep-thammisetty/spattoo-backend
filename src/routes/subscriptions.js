@@ -1,8 +1,9 @@
 import { Router } from 'express';
 import { supabase } from '../services/supabase.js';
 import { requireAuth } from '../middleware/auth.js';
-import { PLAN }   from '../constants/subscriptionPlans.js';
-import { PERIOD } from '../constants/billingPeriods.js';
+import { PLAN }                from '../constants/subscriptionPlans.js';
+import { PERIOD }              from '../constants/billingPeriods.js';
+import { SUBSCRIPTION_STATUS } from '../constants/subscriptionStatuses.js';
 
 const router = Router();
 
@@ -44,7 +45,6 @@ export async function deriveSubscription(bakerId) {
     period:     row.period_name ? { name: row.period_name, display_name: row.period_display_name } : null,
     end_date:   row.end_date,
     start_date: row.start_date,
-    billing_subscription_id: row.billing_subscription_id,
   };
 }
 
@@ -132,7 +132,7 @@ router.post('/admin/bakers/:id/subscription', requireAuth, async (req, res) => {
     // Close the current active subscription row
     if (current.id) {
       await supabase.from('baker_subscriptions')
-        .update({ status: 'cancelled', end_date: today })
+        .update({ status_id: SUBSCRIPTION_STATUS.CANCELLED, end_date: today })
         .eq('id', current.id);
     }
 
@@ -148,11 +148,12 @@ router.post('/admin/bakers/:id/subscription', requireAuth, async (req, res) => {
     }
 
     // Create the new row
+    const statusId = SUBSCRIPTION_STATUS.ID_BY_NAME[status] ?? SUBSCRIPTION_STATUS.ACTIVE;
     const { error: insertErr } = await supabase.from('baker_subscriptions').insert({
       baker_id:          req.params.id,
       plan_id:           planId,
       billing_period_id: billing_period_id || null,
-      status:            status ?? 'active',
+      status_id:         statusId,
       start_date:        today,
       end_date:          resolvedEndDate,
     });
@@ -176,6 +177,22 @@ router.post('/admin/bakers/:id/subscription', requireAuth, async (req, res) => {
 
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── GET /admin/bakers/:id/payments ────────────────────────────────────────────
+router.get('/admin/bakers/:id/payments', requireAuth, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('payments')
+      .select('id, razorpay_payment_id, amount, currency, status_id, charged_at')
+      .eq('baker_id', req.params.id)
+      .order('charged_at', { ascending: false })
+      .limit(50);
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data ?? []);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ── GET /baker/subscription/history ───────────────────────────────────────────

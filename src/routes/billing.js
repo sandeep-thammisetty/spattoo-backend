@@ -170,17 +170,12 @@ router.post('/billing/cancel', requireAuth, async (req, res) => {
 
     await razorpayCancelSubscription(baker.billing_subscription_id, true);
 
-    const today = new Date().toISOString().slice(0, 10);
-
-    // TODO: when Razorpay is live, only update bakers here — leave baker_subscriptions
-    //       active until the subscription.cancelled webhook fires at cycle end.
+    // Only flip the baker status — baker_subscriptions stays active until the cycle ends.
+    // A daily job handles expiring baker_subscriptions rows once end_date has passed.
+    // TODO: when Razorpay is live, the subscription.cancelled webhook will also update baker_subscriptions.
     await supabase.from('bakers')
       .update({ subscription_status_id: SUBSCRIPTION_STATUS.CANCELLED })
       .eq('id', baker.id);
-
-    await supabase.from('baker_subscriptions')
-      .update({ status_id: SUBSCRIPTION_STATUS.CANCELLED, end_date: today })
-      .eq('baker_id', baker.id).eq('status_id', SUBSCRIPTION_STATUS.ACTIVE);
 
     res.json({ ok: true });
   } catch (err) {

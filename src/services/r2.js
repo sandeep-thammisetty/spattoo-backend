@@ -9,6 +9,8 @@ export const r2 = new S3Client({
     accessKeyId:     config.r2.accessKeyId,
     secretAccessKey: config.r2.secretAccessKey,
   },
+  requestChecksumCalculation:  'WHEN_REQUIRED',
+  responseChecksumValidation:  'WHEN_REQUIRED',
 });
 
 // Returns a signed URL the frontend can PUT a file to directly (expires in 1 hour)

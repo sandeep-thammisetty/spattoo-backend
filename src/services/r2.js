@@ -16,10 +16,9 @@ export const r2 = new S3Client({
 // Returns a signed URL the frontend can PUT a file to directly (expires in 1 hour)
 export async function getSignedUploadUrl(key, contentType) {
   const command = new PutObjectCommand({
-    Bucket:       config.r2.bucket,
-    Key:          key,
-    ContentType:  contentType,
-    CacheControl: 'public, max-age=31536000, immutable',
+    Bucket:      config.r2.bucket,
+    Key:         key,
+    ContentType: contentType,
   });
   return getSignedUrl(r2, command, { expiresIn: 3600 });
 }

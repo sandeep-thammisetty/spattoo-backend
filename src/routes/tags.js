@@ -2,6 +2,78 @@ import { Router } from 'express';
 import { supabase } from '../services/supabase.js';
 import { requireAuth } from '../middleware/auth.js';
 import { jobQueue } from '../jobs/queue.js';
+import { config } from '../config.js';
+
+function toPublicUrl(key) {
+  if (!key) return null;
+  if (key.startsWith('http')) return key;
+  return `${config.r2.publicUrl}/${key}`;
+}
+
+async function runAutoTag(entityType, entityId, thumbnailKey, name) {
+  const { data: tags } = await supabase
+    .from('tags')
+    .select('id, name, slug, category')
+    .eq('ai_assignable', true)
+    .eq('is_active', true);
+
+  if (!tags?.length) return [];
+
+  const imageUrl = toPublicUrl(thumbnailKey);
+  const vocabByCategory = tags.reduce((acc, t) => {
+    (acc[t.category] ??= []).push(t.slug);
+    return acc;
+  }, {});
+  const vocabText = Object.entries(vocabByCategory)
+    .map(([cat, slugs]) => `${cat}: ${slugs.join(', ')}`)
+    .join('\n');
+
+  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${config.openai.apiKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: 'gpt-4o', max_tokens: 400,
+      messages: [{ role: 'user', content: [
+        { type: 'image_url', image_url: { url: imageUrl } },
+        { type: 'text', text:
+          `You are a cake decoration expert. Analyse this image of "${name}".\n` +
+          `Assign tags ONLY from this vocabulary:\n${vocabText}\n\n` +
+          `Return ONLY a JSON array: [{"slug":"...","confidence":0.0-1.0}]\n` +
+          `Only include tags with confidence >= 0.75. Be conservative.`
+        },
+      ]}],
+    }),
+  });
+
+  if (!res.ok) throw new Error(`GPT-4o failed: ${await res.text()}`);
+  const gpt   = await res.json();
+  const raw   = gpt.choices[0].message.content.trim().replace(/^```[a-z]*\n?/i,'').replace(/\n?```$/i,'');
+  const slugToTag = Object.fromEntries(tags.map(t => [t.slug, t]));
+  const results   = JSON.parse(raw);
+
+  const rows = results
+    .filter(r => r.slug && slugToTag[r.slug] && r.confidence >= 0.75)
+    .map(r => ({
+      ...(entityType === 'element' ? { element_id: entityId } : { template_id: entityId }),
+      tag_id: slugToTag[r.slug].id, source: 'ai',
+      confidence: Math.min(1, r.confidence),
+    }));
+
+  if (!rows.length) return [];
+
+  const table = entityType === 'element' ? 'element_tags' : 'template_tags';
+  const conflictCol = entityType === 'element' ? 'element_id,tag_id' : 'template_id,tag_id';
+  await supabase.from(table).upsert(rows, { onConflict: conflictCol, ignoreDuplicates: true });
+
+  // Return the full updated tag list for the entity
+  const idCol = entityType === 'element' ? 'element_id' : 'template_id';
+  const { data: updated } = await supabase
+    .from(table)
+    .select('tag_id, source, confidence, tags(id, name, slug, category)')
+    .eq(idCol, entityId);
+
+  return updated ?? [];
+}
 
 const router = Router();
 
@@ -121,7 +193,7 @@ router.put('/admin/elements/:id/tags', requireAuth, async (req, res) => {
   }
 });
 
-// Re-run AI tagging for an element
+// Re-run AI tagging for an element — runs synchronously, returns updated tags
 router.post('/admin/elements/:id/retag', requireAuth, async (req, res) => {
   try {
     const { data: el, error } = await supabase
@@ -132,8 +204,8 @@ router.post('/admin/elements/:id/retag', requireAuth, async (req, res) => {
     if (error) return res.status(404).json({ error: 'Element not found' });
     if (!el.thumbnail_url) return res.status(400).json({ error: 'Element has no thumbnail to analyse' });
 
-    await jobQueue.add('auto_tag', { entityType: 'element', entityId: el.id, thumbnailKey: el.thumbnail_url, name: el.name });
-    res.json({ ok: true });
+    const tags = await runAutoTag('element', el.id, el.thumbnail_url, el.name);
+    res.json({ tags });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -180,8 +252,8 @@ router.post('/admin/templates/:id/retag', requireAuth, async (req, res) => {
     if (error) return res.status(404).json({ error: 'Template not found' });
     if (!tmpl.thumbnail_url) return res.status(400).json({ error: 'Template has no thumbnail to analyse' });
 
-    await jobQueue.add('auto_tag', { entityType: 'template', entityId: tmpl.id, thumbnailKey: tmpl.thumbnail_url, name: tmpl.name });
-    res.json({ ok: true });
+    const tags = await runAutoTag('template', tmpl.id, tmpl.thumbnail_url, tmpl.name);
+    res.json({ tags });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

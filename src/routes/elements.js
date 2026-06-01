@@ -4,6 +4,7 @@ import { supabase } from '../services/supabase.js';
 import { requireAuth } from '../middleware/auth.js';
 import { config } from '../config.js';
 import { removeBackground } from '../services/removebg.js';
+import { jobQueue } from '../jobs/queue.js';
 
 const router = Router();
 
@@ -82,10 +83,12 @@ router.get('/elements', requireAuth, async (req, res) => {
   try {
     const { element_type_id, parents_only } = req.query;
 
+    const TAG_JOIN = 'element_tags(tags(slug))';
+
     if (parents_only === 'true') {
       let query = supabase
         .from('cake_elements')
-        .select('id, name, image_url, thumbnail_url, element_type_id, allowed_zones, placement_config, allowed_actions, default_color, sort_order')
+        .select(`id, name, image_url, thumbnail_url, element_type_id, allowed_zones, placement_config, allowed_actions, default_color, sort_order, ${TAG_JOIN}`)
         .eq('is_active', true)
         .is('parent_id', null)
         .order('sort_order');
@@ -94,16 +97,17 @@ router.get('/elements', requireAuth, async (req, res) => {
 
       const { data, error } = await query;
       if (error) return res.status(500).json({ error: error.message });
-      return res.json(data.map(el => ({
+      return res.json(data.map(({ element_tags, ...el }) => ({
         ...el,
         image_url:     toPublicUrl(el.image_url),
         thumbnail_url: toPublicUrl(el.thumbnail_url),
+        tag_slugs:     (element_tags ?? []).map(r => r.tags?.slug).filter(Boolean),
       })));
     }
 
     let query = supabase
       .from('cake_elements')
-      .select('id, name, image_url, thumbnail_url, element_type_id, allowed_zones, placement_config, allowed_actions, default_color, sort_order, baker_id, parent_id')
+      .select(`id, name, image_url, thumbnail_url, element_type_id, allowed_zones, placement_config, allowed_actions, default_color, sort_order, baker_id, parent_id, ${TAG_JOIN}`)
       .eq('is_active', true)
       .order('sort_order');
 
@@ -112,10 +116,11 @@ router.get('/elements', requireAuth, async (req, res) => {
     const { data, error } = await query;
     if (error) return res.status(500).json({ error: error.message });
 
-    const elements = data.map(el => ({
+    const elements = data.map(({ element_tags, ...el }) => ({
       ...el,
       image_url:     toPublicUrl(el.image_url),
       thumbnail_url: toPublicUrl(el.thumbnail_url),
+      tag_slugs:     (element_tags ?? []).map(r => r.tags?.slug).filter(Boolean),
     }));
 
     res.json(elements);
@@ -218,6 +223,11 @@ router.post('/admin/elements', requireAuth, async (req, res) => {
       .single();
 
     if (error) return res.status(500).json({ error: error.message });
+
+    if (thumbnail_url) {
+      jobQueue.add('auto_tag', { entityType: 'element', entityId: data.id, thumbnailKey: thumbnail_url, name }).catch(() => {});
+    }
+
     res.status(201).json({ id: data.id });
   } catch (err) {
     res.status(500).json({ error: err.message });

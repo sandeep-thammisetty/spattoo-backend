@@ -14,9 +14,10 @@ export const r2 = new S3Client({
 // Returns a signed URL the frontend can PUT a file to directly (expires in 1 hour)
 export async function getSignedUploadUrl(key, contentType) {
   const command = new PutObjectCommand({
-    Bucket:      config.r2.bucket,
-    Key:         key,
-    ContentType: contentType,
+    Bucket:       config.r2.bucket,
+    Key:          key,
+    ContentType:  contentType,
+    CacheControl: 'public, max-age=31536000, immutable',
   });
   return getSignedUrl(r2, command, { expiresIn: 3600 });
 }
@@ -24,10 +25,11 @@ export async function getSignedUploadUrl(key, contentType) {
 // Uploads a Buffer directly from the server (no signed URL round-trip)
 export async function putObject(key, buffer, contentType) {
   const command = new PutObjectCommand({
-    Bucket:      config.r2.bucket,
-    Key:         key,
-    Body:        buffer,
-    ContentType: contentType,
+    Bucket:       config.r2.bucket,
+    Key:          key,
+    Body:         buffer,
+    ContentType:  contentType,
+    CacheControl: 'public, max-age=31536000, immutable',
   });
   await r2.send(command);
   return `${config.r2.publicUrl}/${key}`;

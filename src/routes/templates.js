@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { supabase } from '../services/supabase.js';
 import { requireAuth, attachBakerContext } from '../middleware/auth.js';
 import { config } from '../config.js';
+import { jobQueue } from '../jobs/queue.js';
 
 const router = Router();
 
@@ -11,6 +12,17 @@ function toPublicUrl(key) {
 }
 
 const TEMPLATE_FIELDS = 'id, name, shape, tier_count, type, offering, baker_id, parent_template_id, design, thumbnail_url, sort_order, is_active';
+const TEMPLATE_FILTER_JOIN = 'template_tags(tags(slug)), cake_template_attrs(min_weight_kg, min_age, max_age)';
+
+function withTagsAndAttrs({ template_tags, cake_template_attrs, ...t }) {
+  const rawAttrs = cake_template_attrs;
+  const attrs = Array.isArray(rawAttrs) ? (rawAttrs[0] ?? null) : (rawAttrs ?? null);
+  return {
+    ...t,
+    tag_slugs: (template_tags ?? []).map(r => r.tags?.slug).filter(Boolean),
+    attrs,
+  };
+}
 
 router.get('/templates', requireAuth, attachBakerContext, async (req, res) => {
   try {
@@ -18,7 +30,7 @@ router.get('/templates', requireAuth, attachBakerContext, async (req, res) => {
 
     let query = supabase
       .from('cake_templates')
-      .select(TEMPLATE_FIELDS)
+      .select(`${TEMPLATE_FIELDS}, ${TEMPLATE_FILTER_JOIN}`)
       .eq('is_active', true)
       .order('sort_order');
 
@@ -39,7 +51,7 @@ router.get('/templates', requireAuth, attachBakerContext, async (req, res) => {
     const { data, error } = await query;
     if (error) return res.status(500).json({ error: error.message });
 
-    res.json(data.map(t => ({ ...t, thumbnail_url: toPublicUrl(t.thumbnail_url) })));
+    res.json(data.map(t => withTagsAndAttrs({ ...t, thumbnail_url: toPublicUrl(t.thumbnail_url) })));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -49,11 +61,11 @@ router.get('/admin/templates', requireAuth, async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('cake_templates')
-      .select(TEMPLATE_FIELDS)
+      .select(`${TEMPLATE_FIELDS}, ${TEMPLATE_FILTER_JOIN}`)
       .order('sort_order');
 
     if (error) return res.status(500).json({ error: error.message });
-    res.json(data.map(t => ({ ...t, thumbnail_url: toPublicUrl(t.thumbnail_url) })));
+    res.json(data.map(t => withTagsAndAttrs({ ...t, thumbnail_url: toPublicUrl(t.thumbnail_url) })));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -63,12 +75,12 @@ router.get('/templates/:id', requireAuth, async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('cake_templates')
-      .select(TEMPLATE_FIELDS)
+      .select(`${TEMPLATE_FIELDS}, ${TEMPLATE_FILTER_JOIN}`)
       .eq('id', req.params.id)
       .single();
 
     if (error) return res.status(404).json({ error: 'Template not found' });
-    res.json({ ...data, thumbnail_url: toPublicUrl(data.thumbnail_url) });
+    res.json(withTagsAndAttrs({ ...data, thumbnail_url: toPublicUrl(data.thumbnail_url) }));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -100,6 +112,11 @@ router.post('/admin/templates', requireAuth, async (req, res) => {
       .single();
 
     if (error) return res.status(500).json({ error: error.message });
+
+    if (thumbnail_url) {
+      jobQueue.add('auto_tag', { entityType: 'template', entityId: data.id, thumbnailKey: thumbnail_url, name }).catch(() => {});
+    }
+
     res.status(201).json({ id: data.id });
   } catch (err) {
     res.status(500).json({ error: err.message });

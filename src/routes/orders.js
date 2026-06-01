@@ -1,8 +1,12 @@
 import { Router } from 'express';
-import { randomUUID } from 'crypto';
 import { supabase } from '../services/supabase.js';
-import { putObject } from '../services/r2.js';
 import { requireAuth } from '../middleware/auth.js';
+import { config } from '../config.js';
+
+function toPublicUrl(key) {
+  if (!key) return null;
+  return `${config.r2.publicUrl}/${key}`;
+}
 
 const router = Router();
 
@@ -13,7 +17,7 @@ const router = Router();
 //   bakerSlug            string   required
 //   customer             object   required  { email, firstName, lastName, phone? }
 //   designSnapshot       object   required  full design JSON
-//   designThumbnail      string?  base64 PNG data URL (e.g. "data:image/png;base64,...")
+//   designThumbnailKey   string?  R2 key of pre-uploaded thumbnail (e.g. "orders/thumbnails/uuid.png")
 //   weightKg             number?
 //   flavours             array?   [{ tier: 0, flavour: "vanilla" }, ...]
 //   specialInstructions  string?
@@ -75,7 +79,7 @@ router.post('/orders', async (req, res) => {
       bakerSlug,
       customer,
       designSnapshot,
-      designThumbnail,
+      designThumbnailKey,
       weightKg,
       flavours,
       specialInstructions,
@@ -142,14 +146,8 @@ router.post('/orders', async (req, res) => {
       existingCustomer = newCustomer;
     }
 
-    // ── Upload thumbnail to R2 ──────────────────────────────────────────────
-    let thumbnailUrl = null;
-    if (designThumbnail) {
-      const base64Data = designThumbnail.replace(/^data:image\/png;base64,/, '');
-      const buffer     = Buffer.from(base64Data, 'base64');
-      const key        = `orders/thumbnails/${randomUUID()}.png`;
-      thumbnailUrl     = await putObject(key, buffer, 'image/png');
-    }
+    // Store the R2 key; toPublicUrl is applied on fetch
+    const thumbnailUrl = designThumbnailKey ?? null;
 
     // ── Insert order ────────────────────────────────────────────────────────
     const { data: order, error: orderError } = await supabase
@@ -219,7 +217,7 @@ router.get('/orders', requireAuth, async (req, res) => {
     const { data, error } = await query;
     if (error) return res.status(500).json({ error: error.message });
 
-    res.json(data);
+    res.json(data.map(o => ({ ...o, design_thumbnail_url: toPublicUrl(o.design_thumbnail_url) })));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -364,7 +362,7 @@ router.patch('/orders/:id', requireAuth, async (req, res) => {
 
 router.patch('/orders/:id/design', requireAuth, async (req, res) => {
   try {
-    const { designSnapshot, designThumbnail, comment } = req.body;
+    const { designSnapshot, designThumbnailKey, comment } = req.body;
     if (!designSnapshot)    return res.status(400).json({ error: 'designSnapshot is required' });
     if (!comment?.trim())   return res.status(400).json({ error: 'comment is required' });
 
@@ -377,17 +375,10 @@ router.patch('/orders/:id/design', requireAuth, async (req, res) => {
       .from('orders').select('id').eq('id', req.params.id).eq('baker_id', appUser.baker_id).maybeSingle();
     if (!existing) return res.status(404).json({ error: 'Order not found' });
 
-    // Upload new thumbnail if provided
-    let thumbnailUrl = null;
-    if (designThumbnail) {
-      const base64Data = designThumbnail.replace(/^data:image\/png;base64,/, '');
-      const buffer     = Buffer.from(base64Data, 'base64');
-      const key        = `orders/thumbnails/${randomUUID()}.png`;
-      thumbnailUrl     = await putObject(key, buffer, 'image/png');
-    }
-
     const updates = { design_snapshot: designSnapshot };
-    if (thumbnailUrl) updates.design_thumbnail_url = thumbnailUrl;
+    if (designThumbnailKey) {
+      updates.design_thumbnail_url = designThumbnailKey;
+    }
 
     const { data: order, error } = await supabase
       .from('orders').update(updates).eq('id', req.params.id).eq('baker_id', appUser.baker_id)
@@ -402,7 +393,7 @@ router.patch('/orders/:id/design', requireAuth, async (req, res) => {
     });
     if (auditError) console.error('Audit log insert failed:', auditError.message);
 
-    res.json({ orderId: req.params.id, designThumbnailUrl: order.design_thumbnail_url });
+    res.json({ orderId: req.params.id, designThumbnailUrl: toPublicUrl(order.design_thumbnail_url) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

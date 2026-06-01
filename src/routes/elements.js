@@ -83,12 +83,12 @@ router.get('/elements', requireAuth, async (req, res) => {
   try {
     const { element_type_id, parents_only } = req.query;
 
-    const TAG_JOIN = 'element_tags(tags(slug))';
+    const ELEM_FIELDS = 'id, name, description, image_url, thumbnail_url, element_type_id, allowed_zones, placement_config, allowed_actions, default_color, sort_order';
 
     if (parents_only === 'true') {
       let query = supabase
         .from('cake_elements')
-        .select(`id, name, image_url, thumbnail_url, element_type_id, allowed_zones, placement_config, allowed_actions, default_color, sort_order, ${TAG_JOIN}`)
+        .select(ELEM_FIELDS)
         .eq('is_active', true)
         .is('parent_id', null)
         .order('sort_order');
@@ -97,17 +97,16 @@ router.get('/elements', requireAuth, async (req, res) => {
 
       const { data, error } = await query;
       if (error) return res.status(500).json({ error: error.message });
-      return res.json(data.map(({ element_tags, ...el }) => ({
+      return res.json(data.map(el => ({
         ...el,
         image_url:     toPublicUrl(el.image_url),
         thumbnail_url: toPublicUrl(el.thumbnail_url),
-        tag_slugs:     (element_tags ?? []).map(r => r.tags?.slug).filter(Boolean),
       })));
     }
 
     let query = supabase
       .from('cake_elements')
-      .select(`id, name, image_url, thumbnail_url, element_type_id, allowed_zones, placement_config, allowed_actions, default_color, sort_order, baker_id, parent_id, ${TAG_JOIN}`)
+      .select(`${ELEM_FIELDS}, baker_id, parent_id`)
       .eq('is_active', true)
       .order('sort_order');
 
@@ -116,14 +115,11 @@ router.get('/elements', requireAuth, async (req, res) => {
     const { data, error } = await query;
     if (error) return res.status(500).json({ error: error.message });
 
-    const elements = data.map(({ element_tags, ...el }) => ({
+    res.json(data.map(el => ({
       ...el,
       image_url:     toPublicUrl(el.image_url),
       thumbnail_url: toPublicUrl(el.thumbnail_url),
-      tag_slugs:     (element_tags ?? []).map(r => r.tags?.slug).filter(Boolean),
-    }));
-
-    res.json(elements);
+    })));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -149,7 +145,7 @@ router.get('/admin/elements', requireAuth, async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('cake_elements')
-      .select('id, name, image_url, thumbnail_url, element_type_id, parent_id, allowed_zones, placement_config, allowed_actions, default_color, sort_order, is_active, baker_id')
+      .select('id, name, description, image_url, thumbnail_url, element_type_id, parent_id, allowed_zones, placement_config, allowed_actions, default_color, sort_order, is_active, baker_id')
       .is('baker_id', null)
       .order('sort_order');
 
@@ -167,10 +163,11 @@ router.get('/admin/elements', requireAuth, async (req, res) => {
 router.patch('/admin/elements/:id', requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, image_url, thumbnail_url, element_type_id, parent_id, allowed_zones, placement_config, allowed_actions, default_color, sort_order, is_active } = req.body;
+    const { name, description, image_url, thumbnail_url, element_type_id, parent_id, allowed_zones, placement_config, allowed_actions, default_color, sort_order, is_active } = req.body;
 
     const updates = {};
     if (name            != null)      updates.name             = name;
+    if (description     !== undefined) updates.description     = description;
     if (image_url       !== undefined) updates.image_url        = image_url;
     if (thumbnail_url   !== undefined) updates.thumbnail_url    = thumbnail_url;
     if (element_type_id != null)      updates.element_type_id  = element_type_id;
@@ -198,7 +195,7 @@ router.patch('/admin/elements/:id', requireAuth, async (req, res) => {
 
 router.post('/admin/elements', requireAuth, async (req, res) => {
   try {
-    const { name, image_url, thumbnail_url, element_type_id, parent_id, allowed_zones, placement_config, allowed_actions, default_color, sort_order } = req.body;
+    const { name, description, image_url, thumbnail_url, element_type_id, parent_id, allowed_zones, placement_config, allowed_actions, default_color, sort_order } = req.body;
     if (!name || !element_type_id) {
       return res.status(400).json({ error: 'name and element_type_id are required' });
     }
@@ -207,6 +204,7 @@ router.post('/admin/elements', requireAuth, async (req, res) => {
       .from('cake_elements')
       .insert({
         name,
+        description:      description ?? '',
         image_url,
         thumbnail_url,
         element_type_id,
@@ -223,10 +221,6 @@ router.post('/admin/elements', requireAuth, async (req, res) => {
       .single();
 
     if (error) return res.status(500).json({ error: error.message });
-
-    if (thumbnail_url) {
-      jobQueue.add('auto_tag', { entityType: 'element', entityId: data.id, thumbnailKey: thumbnail_url, name }).catch(() => {});
-    }
 
     res.status(201).json({ id: data.id });
   } catch (err) {

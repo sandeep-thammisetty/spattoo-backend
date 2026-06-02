@@ -39,6 +39,10 @@ function orderDetailsHtml(p) {
 function buildEmail(typeSlug, recipientEmail, payload) {
   const p = payload;
 
+  const thumbnailHtml = p.thumbnailUrl
+    ? `<img src="${p.thumbnailUrl}" alt="Cake design" style="display:block;max-width:100%;border-radius:8px;margin:16px 0" />`
+    : '';
+
   if (typeSlug === 'order_placed_baker') {
     return {
       from:    config.smtp.from,
@@ -47,6 +51,7 @@ function buildEmail(typeSlug, recipientEmail, payload) {
       html: `<div style="font-family:sans-serif;max-width:560px;margin:0 auto">
         <h2 style="color:#2C4433">New Order Received 🎂</h2>
         <p>You have a new cake order from <b>${p.customerName}</b>.</p>
+        ${thumbnailHtml}
         ${orderDetailsHtml(p)}
         <p style="margin-top:24px;color:#888;font-size:12px">Log in to your Spattoo dashboard to view and manage this order.</p>
       </div>`,
@@ -61,6 +66,7 @@ function buildEmail(typeSlug, recipientEmail, payload) {
       html: `<div style="font-family:sans-serif;max-width:560px;margin:0 auto">
         <h2 style="color:#2C4433">Order Confirmed!</h2>
         <p>Hi ${p.customerFirstName}, thank you for your order with <b>${p.bakerName}</b>. Here's a summary:</p>
+        ${thumbnailHtml}
         ${orderDetailsHtml(p)}
         <p style="margin-top:24px">We'll be in touch soon. If you have any questions, contact your baker directly.</p>
         <p style="color:#888;font-size:12px;margin-top:24px">Powered by Spattoo</p>

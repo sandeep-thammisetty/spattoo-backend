@@ -35,6 +35,7 @@ export async function notifyOrderPlaced({ order, baker, customer }) {
     weightKg:          order.weight_kg,
     flavours:          order.flavours,
     specialInstructions: order.special_instructions,
+    thumbnailUrl:      order.design_thumbnail_url ?? null,
   };
 
   const jobs = [];

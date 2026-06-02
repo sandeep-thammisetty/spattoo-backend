@@ -174,7 +174,7 @@ router.post('/orders', async (req, res) => {
 
     // Insert notifications and enqueue — fire and forget, non-blocking
     notifyOrderPlaced({
-      order: { ...order, delivery_date: deliveryDate, delivery_time: deliveryTime, delivery_mode: deliveryMode, delivery_address: deliveryAddress, weight_kg: weightKg, flavours, special_instructions: specialInstructions },
+      order: { ...order, delivery_date: deliveryDate, delivery_time: deliveryTime, delivery_mode: deliveryMode, delivery_address: deliveryAddress, weight_kg: weightKg, flavours, special_instructions: specialInstructions, design_thumbnail_url: toPublicUrl(thumbnailUrl) },
       baker,
       customer: { first_name: customer.firstName, last_name: customer.lastName, email: emailNorm, phone: phoneNorm },
     }).catch(err => console.error('[notifications] failed:', err.message));

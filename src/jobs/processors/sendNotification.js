@@ -62,7 +62,7 @@ function buildEmail(typeSlug, recipientEmail, payload) {
     return {
       from:    config.smtp.from,
       to:      recipientEmail,
-      subject: `Your cake order is confirmed! 🎂`,
+      subject: `Your cake order is confirmed!`,
       html: `<div style="font-family:sans-serif;max-width:560px;margin:0 auto">
         <h2 style="color:#2C4433">Order Confirmed!</h2>
         <p>Hi ${p.customerFirstName}, thank you for your order with <b>${p.bakerName}</b>. Here's a summary:</p>

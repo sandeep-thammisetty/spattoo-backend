@@ -60,7 +60,7 @@ function buildEmail(typeSlug, recipientEmail, payload) {
 
   if (typeSlug === 'order_placed_customer') {
     return {
-      from:    config.smtp.from,
+      from:    `${p.bakerName} <${config.smtp.from}>`,
       to:      recipientEmail,
       subject: `Your cake order is confirmed!`,
       html: `<div style="font-family:sans-serif;max-width:560px;margin:0 auto">

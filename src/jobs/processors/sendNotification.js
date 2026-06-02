@@ -23,7 +23,7 @@ function orderDetailsHtml(p) {
     ['Mode',         p.deliveryMode === 'home_delivery' ? 'Home Delivery' : 'Pickup'],
     p.deliveryAddress ? ['Address', p.deliveryAddress] : null,
     p.weightKg ? ['Weight', `${p.weightKg} kg`] : null,
-    p.flavours?.length ? ['Flavours', p.flavours.map(f => f.flavour ?? f).join(', ')] : null,
+    p.flavours?.length ? ['Flavours', p.flavours.map(f => f.name ?? f.flavour ?? f).join(', ')] : null,
     p.specialInstructions ? ['Instructions', p.specialInstructions] : null,
   ].filter(Boolean);
 

@@ -39,5 +39,12 @@ export const config = {
     // Plan IDs are read dynamically from env using RAZORPAY_PLAN_{TIER}_{PERIOD}
     // e.g. RAZORPAY_PLAN_FLAME_MONTHLY, RAZORPAY_PLAN_BLAZE_QUARTERLY, etc.
   },
+  smtp: {
+    host: process.env.SMTP_HOST,
+    port: parseInt(process.env.SMTP_PORT || '465', 10),
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS,
+    from: process.env.SMTP_FROM || process.env.SMTP_USER,
+  },
   port:     parseInt(process.env.PORT || '3000', 10),
 };

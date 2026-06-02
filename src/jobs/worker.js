@@ -2,10 +2,12 @@ import { Worker } from 'bullmq';
 import { connection } from './queue.js';
 import { extractImage } from './processors/extractImage.js';
 import { autoTag } from './processors/autoTag.js';
+import { sendNotification } from './processors/sendNotification.js';
 
 const processors = {
-  extract_image: extractImage,
-  auto_tag:      autoTag,
+  extract_image:     extractImage,
+  auto_tag:          autoTag,
+  send_notification: sendNotification,
 };
 
 export function startWorker() {

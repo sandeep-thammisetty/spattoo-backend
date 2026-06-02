@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { supabase } from '../services/supabase.js';
 import { requireAuth } from '../middleware/auth.js';
 import { config } from '../config.js';
+import { notifyOrderPlaced } from '../services/notifications.js';
 
 function toPublicUrl(key) {
   if (!key) return null;
@@ -104,7 +105,7 @@ router.post('/orders', async (req, res) => {
     // ── Resolve baker ───────────────────────────────────────────────────────
     const { data: baker, error: bakerError } = await supabase
       .from('bakers')
-      .select('id')
+      .select('id, name, email')
       .eq('slug', bakerSlug)
       .eq('is_active', true)
       .maybeSingle();
@@ -170,6 +171,13 @@ router.post('/orders', async (req, res) => {
       .single();
 
     if (orderError) return res.status(500).json({ error: orderError.message });
+
+    // Insert notifications and enqueue — fire and forget, non-blocking
+    notifyOrderPlaced({
+      order: { ...order, delivery_date: deliveryDate, delivery_time: deliveryTime, delivery_mode: deliveryMode, delivery_address: deliveryAddress, weight_kg: weightKg, flavours, special_instructions: specialInstructions },
+      baker,
+      customer: { first_name: customer.firstName, last_name: customer.lastName, email: emailNorm, phone: phoneNorm },
+    }).catch(err => console.error('[notifications] failed:', err.message));
 
     res.status(201).json({
       orderId:   order.id,

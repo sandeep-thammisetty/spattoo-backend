@@ -91,11 +91,11 @@ export async function sendNotification({ notificationId }) {
       sent_at: new Date().toISOString(),
     }).eq('id', notificationId);
   } catch (err) {
+    const exhausted = notification.attempts >= notification.max_attempts;
     await supabase.from('notifications').update({
-      status:        'failed',
-      failed_at:     new Date().toISOString(),
+      status:        exhausted ? 'failed' : 'pending',
       error_message: err.message,
+      ...(exhausted ? { failed_at: new Date().toISOString() } : {}),
     }).eq('id', notificationId);
-    throw err; // rethrow so BullMQ retries
   }
 }

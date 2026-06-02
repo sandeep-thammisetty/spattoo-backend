@@ -1,5 +1,4 @@
 import { supabase } from './supabase.js';
-import { jobQueue } from '../jobs/queue.js';
 
 async function getTypeId(slug) {
   const { data } = await supabase
@@ -10,22 +9,15 @@ async function getTypeId(slug) {
   return data?.id;
 }
 
-async function enqueueNotification(typeSlug, recipientEmail, payload) {
+async function insertNotification(typeSlug, recipientEmail, payload) {
   const typeId = await getTypeId(typeSlug);
   if (!typeId) throw new Error(`Unknown notification type: ${typeSlug}`);
 
-  const { data, error } = await supabase
+  const { error } = await supabase
     .from('notifications')
-    .insert({ type_id: typeId, recipient_email: recipientEmail, payload })
-    .select('id')
-    .single();
+    .insert({ type_id: typeId, recipient_email: recipientEmail, payload });
 
   if (error) throw new Error(`Failed to insert notification: ${error.message}`);
-
-  await jobQueue.add('send_notification', { notificationId: data.id }, {
-    attempts: 3,
-    backoff: { type: 'exponential', delay: 5000 },
-  });
 }
 
 export async function notifyOrderPlaced({ order, baker, customer }) {
@@ -48,10 +40,10 @@ export async function notifyOrderPlaced({ order, baker, customer }) {
   const jobs = [];
 
   if (baker.email) {
-    jobs.push(enqueueNotification('order_placed_baker', baker.email, payload));
+    jobs.push(insertNotification('order_placed_baker', baker.email, payload));
   }
   if (customer.email) {
-    jobs.push(enqueueNotification('order_placed_customer', customer.email, payload));
+    jobs.push(insertNotification('order_placed_customer', customer.email, payload));
   }
 
   await Promise.all(jobs);

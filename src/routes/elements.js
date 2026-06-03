@@ -228,4 +228,82 @@ router.post('/admin/elements', requireAuth, async (req, res) => {
   }
 });
 
+router.post('/admin/elements/suggest', requireAuth, async (req, res) => {
+  try {
+    const { imageBase64, mimeType, elementType } = req.body;
+    if (!imageBase64 || !mimeType) return res.status(400).json({ error: 'imageBase64 and mimeType are required' });
+
+    // Fetch existing names for collision detection
+    const { data: existing } = await supabase
+      .from('cake_elements')
+      .select('name')
+      .is('baker_id', null);
+    const existingNames = new Set((existing ?? []).map(e => e.name.toLowerCase()));
+
+    const prompt = `You are naming cake decoration elements for a professional bakery platform.
+Analyse this element image and suggest names and a description.
+
+Element type context: ${elementType || 'cake decoration'}
+
+Rules for names:
+- Title Case, maximum 3 words
+- Lead with the most distinctive visual feature (shape, style, or texture) — not the type
+- Be specific enough that two similar shapes would get different names (e.g. "Open Star Swirl" vs "Closed Shell Curl")
+- Do NOT use generic words like "Design", "Style", "Type", "Element", "Pattern"
+- Think like a professional cake decorator naming a piping tip result
+
+Rules for description:
+- One sentence, max 15 words
+- Pack in search keywords a baker would use (shape, style, occasion, technique)
+- Plain English, no jargon
+
+Return ONLY valid JSON, no explanation:
+{
+  "names": ["<most specific name>", "<alternative name>", "<third option>"],
+  "description": "<one sentence description>"
+}`;
+
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${config.openai.apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o',
+        max_tokens: 200,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'image_url', image_url: { url: `data:${mimeType};base64,${imageBase64}`, detail: 'low' } },
+            { type: 'text', text: prompt },
+          ],
+        }],
+      }),
+    });
+
+    if (!response.ok) throw new Error(`OpenAI error: ${await response.text()}`);
+    const data = await response.json();
+    const raw  = data.choices[0].message.content.trim();
+    const json = raw.replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/i, '').trim();
+    const { names, description } = JSON.parse(json);
+
+    // Apply roman numeral suffix for any name that already exists
+    const suffixed = names.map(name => {
+      const base = name.trim();
+      if (!existingNames.has(base.toLowerCase())) return base;
+      const numerals = ['II', 'III', 'IV', 'V'];
+      for (const n of numerals) {
+        const candidate = `${base} ${n}`;
+        if (!existingNames.has(candidate.toLowerCase())) return candidate;
+      }
+      return base;
+    });
+
+    res.json({ names: suffixed, description });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;

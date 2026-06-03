@@ -217,10 +217,11 @@ router.get('/orders', requireAuth, async (req, res) => {
       .eq('baker_id', appUser.baker_id)
       .order('created_at', { ascending: false });
 
-    if (status)        query = query.eq('status', status);
-    if (from)          query = query.gte('created_at', from);
-    if (to)            query = query.lte('created_at', to);
+    if (status)               query = query.eq('status', status);
+    if (from)                 query = query.gte('created_at', from);
+    if (to)                   query = query.lte('created_at', to);
     if (req.query.delivery_date) query = query.eq('delivery_date', req.query.delivery_date);
+    if (req.query.customer_id)   query = query.eq('customer_id', req.query.customer_id);
 
     const { data, error } = await query;
     if (error) return res.status(500).json({ error: error.message });

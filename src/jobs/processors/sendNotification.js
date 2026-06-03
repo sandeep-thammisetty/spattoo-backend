@@ -36,6 +36,11 @@ function orderDetailsHtml(p) {
   </table>`;
 }
 
+function rawEmail(from) {
+  const match = from.match(/<([^>]+)>/);
+  return match ? match[1] : from;
+}
+
 function buildEmail(typeSlug, recipientEmail, payload) {
   const p = payload;
 
@@ -60,7 +65,7 @@ function buildEmail(typeSlug, recipientEmail, payload) {
 
   if (typeSlug === 'order_placed_customer') {
     return {
-      from:    `${p.bakerName} <${config.smtp.from}>`,
+      from:    `${p.bakerName} <${rawEmail(config.smtp.from)}>`,
       to:      recipientEmail,
       subject: `Your cake order is confirmed!`,
       html: `<div style="font-family:sans-serif;max-width:560px;margin:0 auto">

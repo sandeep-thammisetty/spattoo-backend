@@ -306,6 +306,7 @@ Return ONLY valid JSON, no explanation:
 
     res.json({ names: suffixed, description });
   } catch (err) {
+    console.error('suggest error:', err.message, err.stack);
     res.status(500).json({ error: err.message });
   }
 });

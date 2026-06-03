@@ -241,26 +241,27 @@ router.post('/admin/elements/suggest', requireAuth, async (req, res) => {
     const existingNames = new Set((existing ?? []).map(e => e.name.toLowerCase()));
 
     const prompt = `You are naming cake decoration elements for a professional bakery platform.
-Analyse this element image and suggest names and a description.
+Analyse this element image and suggest names and search keywords.
 
 Element type context: ${elementType || 'cake decoration'}
 
 Rules for names:
 - Title Case, maximum 3 words
 - Lead with the most distinctive visual feature (shape, style, or texture) — not the type
-- Be specific enough that two similar shapes would get different names (e.g. "Open Star Swirl" vs "Closed Shell Curl")
+- Be specific enough that two similar shapes get different names (e.g. "Open Star Swirl" vs "Closed Shell Curl")
 - Do NOT use generic words like "Design", "Style", "Type", "Element", "Pattern"
 - Think like a professional cake decorator naming a piping tip result
 
-Rules for description:
-- One sentence, max 15 words
-- Pack in search keywords a baker would use (shape, style, occasion, technique)
-- Plain English, no jargon
+Rules for description (search keywords):
+- Comma-separated keywords only — no sentences
+- 8 to 12 keywords covering: shape, technique, style, nozzle/tip type, occasions, alternative names bakers use
+- Think about every way a baker might search for this element
+- Examples: "scroll piping, royal scroll, vintage scroll, baroque flourish, lambeth scroll, wedding cake, ornamental border, buttercream swirl"
 
 Return ONLY valid JSON, no explanation:
 {
   "names": ["<most specific name>", "<alternative name>", "<third option>"],
-  "description": "<one sentence description>"
+  "description": "<comma-separated search keywords>"
 }`;
 
     const response = await fetch('https://api.openai.com/v1/chat/completions', {

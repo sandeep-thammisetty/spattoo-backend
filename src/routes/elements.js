@@ -282,7 +282,11 @@ Return ONLY valid JSON, no explanation:
       }),
     });
 
-    if (!response.ok) throw new Error(`OpenAI error: ${await response.text()}`);
+    if (!response.ok) {
+      const errText = await response.text();
+      console.error('OpenAI suggest error:', errText);
+      throw new Error(`OpenAI error: ${errText}`);
+    }
     const data = await response.json();
     const raw  = data.choices[0].message.content.trim();
     const json = raw.replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/i, '').trim();

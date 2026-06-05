@@ -1,4 +1,4 @@
-import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { config } from '../config.js';
 
@@ -34,6 +34,12 @@ export async function putObject(key, buffer, contentType) {
   });
   await r2.send(command);
   return `${config.r2.publicUrl}/${key}`;
+}
+
+// Deletes an object by key. R2 treats deleting a missing key as success, so this is
+// safe to call even if the file is already gone.
+export async function deleteObject(key) {
+  await r2.send(new DeleteObjectCommand({ Bucket: config.r2.bucket, Key: key }));
 }
 
 // Returns a signed URL to read a file (expires in 1 hour)

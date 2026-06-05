@@ -145,7 +145,7 @@ router.get('/admin/elements', requireAuth, async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('cake_elements')
-      .select('id, name, description, image_url, thumbnail_url, element_type_id, parent_id, allowed_zones, placement_config, allowed_actions, default_color, sort_order, is_active, baker_id')
+      .select('id, name, description, image_url, thumbnail_url, element_type_id, parent_id, allowed_zones, placement_config, allowed_actions, default_color, sort_order, is_active, baker_id, file_size')
       .is('baker_id', null)
       .order('sort_order');
 
@@ -163,7 +163,7 @@ router.get('/admin/elements', requireAuth, async (req, res) => {
 router.patch('/admin/elements/:id', requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, description, image_url, thumbnail_url, element_type_id, parent_id, allowed_zones, placement_config, allowed_actions, default_color, sort_order, is_active } = req.body;
+    const { name, description, image_url, thumbnail_url, element_type_id, parent_id, allowed_zones, placement_config, allowed_actions, default_color, sort_order, is_active, file_size } = req.body;
 
     const updates = {};
     if (name            != null)      updates.name             = name;
@@ -178,6 +178,8 @@ router.patch('/admin/elements/:id', requireAuth, async (req, res) => {
     if (default_color   !== undefined) updates.default_color    = default_color;
     if (sort_order      != null)      updates.sort_order       = sort_order;
     if (is_active       != null)      updates.is_active        = is_active;
+    // Sent alongside a new image_url when an asset is replaced; null clears a stale size.
+    if (file_size       !== undefined) updates.file_size        = file_size;
 
     const { data, error } = await supabase
       .from('cake_elements')
@@ -195,7 +197,7 @@ router.patch('/admin/elements/:id', requireAuth, async (req, res) => {
 
 router.post('/admin/elements', requireAuth, async (req, res) => {
   try {
-    const { name, description, image_url, thumbnail_url, element_type_id, parent_id, allowed_zones, placement_config, allowed_actions, default_color, sort_order } = req.body;
+    const { name, description, image_url, thumbnail_url, element_type_id, parent_id, allowed_zones, placement_config, allowed_actions, default_color, sort_order, file_size } = req.body;
     if (!name || !element_type_id) {
       return res.status(400).json({ error: 'name and element_type_id are required' });
     }
@@ -214,6 +216,7 @@ router.post('/admin/elements', requireAuth, async (req, res) => {
         allowed_actions:  allowed_actions  ?? { resize: true, duplicate: true, color: false, delete: true },
         default_color:    default_color ?? null,
         sort_order:       sort_order ?? 0,
+        file_size:        file_size ?? null,
         baker_id:         null,
         is_active:        true,
       })

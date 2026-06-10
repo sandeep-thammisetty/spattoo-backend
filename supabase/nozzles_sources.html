@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Nozzle Catalog — Sources</title>
+<style>
+  :root { --green:#3D5A44; --ink:#2C4433; --line:#C5D4C8; --soft:#6B8C74; --bg:#EDEAE2; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--ink); margin: 0; padding: 32px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  h2 { font-size: 15px; color: var(--green); margin: 28px 0 10px; text-transform: uppercase; letter-spacing: 1px; }
+  .sub { color: var(--soft); font-size: 13px; margin-bottom: 8px; }
+  .legend { font-size: 12px; color: var(--soft); margin-bottom: 20px; }
+  .legend b { color: var(--ink); }
+  table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 12px; overflow: hidden; box-shadow: 0 1px 3px rgba(44,68,51,0.08); margin-bottom: 8px; }
+  th { background: #F4F8F5; text-align: left; padding: 9px 12px; font-size: 10px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; color: #9BB5A2; border-bottom: 1px solid var(--line); }
+  td { padding: 9px 12px; font-size: 13px; border-bottom: 1px solid #EEF0EC; vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  td.n { color: #9BB5A2; font-weight: 700; width: 28px; }
+  a { color: var(--green); word-break: break-all; }
+  .rel { font-weight: 800; white-space: nowrap; }
+  .ok { color: #2E7D32; }
+  .partial { color: #E08A1E; }
+  .blocked { color: #C0392B; }
+  .note { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; font-size: 13px; line-height: 1.6; }
+  .note ul { margin: 6px 0 0; padding-left: 20px; }
+  code { background: #F4F8F5; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+</style>
+</head>
+<body>
+  <h1>Nozzle Catalog — Sources</h1>
+  <div class="sub">Reference sources used to compile <code>nozzles_seed.sql</code> (Wilton, Ateco, PME).</div>
+  <div class="legend">
+    Reliability: <b class="ok">✅ fetched/parsed</b> &nbsp;·&nbsp;
+    <b class="partial">◐ search snippet / partial</b> &nbsp;·&nbsp;
+    <b class="blocked">⛔ blocked (CAPTCHA / 403 / TLS)</b>
+  </div>
+
+  <h2>Primary (most authoritative)</h2>
+  <table>
+    <thead><tr><th>#</th><th>Source</th><th>URL</th><th>Gave</th><th>Reliability</th></tr></thead>
+    <tbody>
+      <tr><td class="n">1</td><td>Pastry Sampler — Tip Conversion Chart</td><td><a href="https://www.pastrysampler.com/Articles/Tip_Conversions.htm">pastrysampler.com/Articles/Tip_Conversions.htm</a></td><td>Cross-brand equivalents: Ateco/Wilton/Magic Line — round 800s, open star 820s, French 860s, petal/leaf/drop-flower</td><td class="rel ok">✅</td></tr>
+      <tr><td class="n">2</td><td>Kowanii — Piping Tips Chart Guide</td><td><a href="https://www.kowanii.com/blogs/news/piping-tips-chart-guide-a-comprehensive-guide-for-cake-decorating">kowanii.com — piping-tips-chart-guide</a></td><td>Numbers grouped by category (round, star, petal, leaf, drop flower, basketweave, grass)</td><td class="rel ok">✅</td></tr>
+      <tr><td class="n">3</td><td>Wilton — Master Piping Tips Set (55-pc)</td><td><a href="https://wilton.com/master-cake-decorating-piping-tips-set-55-piece-cake-and-cupcake-decorating-set/191001557/">wilton.com — master set (55-pc)</a></td><td>Wilton numbers by category</td><td class="rel partial">◐</td></tr>
+      <tr><td class="n">4</td><td>Wilton — Deluxe Decorating Tip Set (29-pc)</td><td><a href="https://wilton.com/deluxe-decorating-tip-set-29-piece/191001671/">wilton.com — deluxe set (29-pc)</a></td><td>Wilton numbers by category</td><td class="rel partial">◐</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Wilton — usage / category guides</h2>
+  <table>
+    <thead><tr><th>#</th><th>Source</th><th>URL</th><th>Gave</th><th>Reliability</th></tr></thead>
+    <tbody>
+      <tr><td class="n">5</td><td>Wilton blog — How To Use A Star Piping Tip</td><td><a href="https://blog.wilton.com/how-to-use-a-star-piping-tip-star-tip-cake-decorating-and-more/">blog.wilton.com — star tip guide</a></td><td>Open vs closed star behavior</td><td class="rel partial">◐</td></tr>
+      <tr><td class="n">6</td><td>Wilton blog — How to Use Petal Piping Tips</td><td><a href="https://blog.wilton.com/how-to-use-petal-piping-tips-101-guide/">blog.wilton.com — petal tip guide</a></td><td>Petal/rose tip uses</td><td class="rel partial">◐</td></tr>
+      <tr><td class="n">7</td><td>Wilton — Piping Tips 101 starter guide</td><td><a href="https://wilton.com/baking-inspiration/piping-tips-101-starter-guide/">wilton.com — piping tips 101</a></td><td>Category overview</td><td class="rel partial">◐</td></tr>
+      <tr><td class="n">8</td><td>Bakestarters — 10 Must-Have Wilton Tips</td><td><a href="https://bakestarters.com/blogs/education/10-must-have-wilton-piping-tips">bakestarters.com — 10 must-have tips</a></td><td>The go-to tips (informed <code>is_common</code>)</td><td class="rel partial">◐</td></tr>
+      <tr><td class="n">9</td><td>CakeCentral — Decorating Tip Numbers</td><td><a href="https://www.cakecentral.com/tutorial/20193/decorating-tip-numbers">cakecentral.com — decorating tip numbers</a></td><td>Category headings (numbers in images only)</td><td class="rel partial">◐</td></tr>
+      <tr><td class="n">10</td><td>CakeCentral — List Of Wilton Tips</td><td><a href="https://www.cakecentral.com/forum/t/603945/list-of-wilton-cake-decorating-tips">cakecentral.com — list of Wilton tips</a></td><td>Wilton number list</td><td class="rel partial">◐</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Ateco</h2>
+  <table>
+    <thead><tr><th>#</th><th>Source</th><th>URL</th><th>Gave</th><th>Reliability</th></tr></thead>
+    <tbody>
+      <tr><td class="n">11</td><td>Sweet Treat Supply — Wilton &amp; Ateco tips</td><td><a href="https://www.sweettreatsupply.com/piping-tips-s/1943.htm">sweettreatsupply.com — piping tips</a></td><td>Ateco series confirmation</td><td class="rel partial">◐</td></tr>
+      <tr><td class="n">12</td><td>WebstaurantStore — Ateco compatibility (PDF)</td><td><a href="https://www.webstaurantstore.com/documents/PDF/compatibility/ateco-piping_tip_compatibility-guide.pdf">webstaurantstore.com — Ateco compatibility PDF</a></td><td>Ateco compatibility / series</td><td class="rel partial">◐</td></tr>
+      <tr><td class="n">13</td><td>Scribd — Ateco Piping Tips Size Chart</td><td><a href="https://www.scribd.com/document/470920505/ateco-piping-tip-compatibility-guide">scribd.com — Ateco size chart</a></td><td>Ateco size chart</td><td class="rel partial">◐</td></tr>
+    </tbody>
+  </table>
+
+  <h2>PME (several pages CAPTCHA/403-walled — verify directly)</h2>
+  <table>
+    <thead><tr><th>#</th><th>Source</th><th>URL</th><th>Gave</th><th>Reliability</th></tr></thead>
+    <tbody>
+      <tr><td class="n">14</td><td>PME — SupaTubes (official)</td><td><a href="https://www.pmecake.com/en-gb/essentials/piping/piping-tubes/">pmecake.com — SupaTubes</a></td><td>Canonical PME SupaTube numbers/names</td><td class="rel blocked">⛔</td></tr>
+      <tr><td class="n">15</td><td>PME — SupaTube No.1 Writer</td><td><a href="https://www.pmecake.com/en-gb/essentials/piping/piping-tubes/PME-Supatubes-No-1-Writer/">pmecake.com — No.1 Writer</a></td><td>Writer #1 use</td><td class="rel partial">◐</td></tr>
+      <tr><td class="n">16</td><td>PME — SupaTube No.6 Medium Star</td><td><a href="https://www.pmecake.com/en-gb/essentials/piping/piping-tubes/PME-Supatubes-No-6-Medium-Star/">pmecake.com — No.6 Medium Star</a></td><td>Confirmed medium star = #6</td><td class="rel partial">◐</td></tr>
+      <tr><td class="n">17</td><td>Cake-Stuff — PME Piping Tips</td><td><a href="https://www.cake-stuff.com/equipment-c3/piping-tips-c67/pme-m8">cake-stuff.com — PME piping tips</a></td><td>PME range listing</td><td class="rel blocked">⛔</td></tr>
+      <tr><td class="n">18</td><td>Sugar &amp; Crumbs — PME SupaTube Set of 12</td><td><a href="https://www.sugarandcrumbs.co.uk/product/pme-supatube-set-of-12/">sugarandcrumbs.co.uk — SupaTube set of 12</a></td><td>Set numbers: 1, 1.5, 2, 3, 4, 7, 13, 17, 44, 52, 53, 57S</td><td class="rel partial">◐</td></tr>
+      <tr><td class="n">19</td><td>The Cookie Countess — PME SupaTube tips</td><td><a href="https://www.thecookiecountess.com/products/pme-supatube-1-tip">thecookiecountess.com — PME SupaTube</a></td><td>Writer sizes (00, 0, 1, 1.5, 2, 2.5, 3, 4)</td><td class="rel partial">◐</td></tr>
+      <tr><td class="n">20</td><td>CK Products — PME SupaTube Writer #2.5</td><td><a href="https://www.ckproducts.com/tools/decorating-tools/pme-supatube-decorating-tip-writer-11-2-5-43--st2.5">ckproducts.com — PME Writer #2.5</a></td><td>Half-size writers</td><td class="rel partial">◐</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Notes</h2>
+  <div class="note">
+    <b>Best places to expand the catalog further</b>
+    <ul>
+      <li><b>Cross-brand equivalents:</b> Pastry Sampler chart (#1).</li>
+      <li><b>PME full range:</b> pmecake.com SupaTubes (#14) — canonical; grab directly (CAPTCHA-walled for automated fetch).</li>
+      <li><b>Wilton full poster:</b> Wilton's official "Decorate Smart" tip poster / yearbook (numbers live in images, not text).</li>
+    </ul>
+    <b>Confidence</b>
+    <ul>
+      <li>Entries corroborated by a source above, or canonically well-known (Wilton 1M, 2D, 104, 352), are in the seed.</li>
+      <li>Softer / series-inferred — worth an admin spot-check: PME star <b>5</b>/<b>8</b>, Ateco closed-star <b>845</b>/<b>848</b>, Wilton closed-star <b>30</b>/<b>35</b>.</li>
+      <li>A guaranteed-exhaustive (250+) dump was not reachable automatically — several pages were CAPTCHA/403/TLS-blocked. The seed (121 entries) is conservative-verified; expand via the admin bulk-add screen.</li>
+    </ul>
+  </div>
+</body>
+</html>

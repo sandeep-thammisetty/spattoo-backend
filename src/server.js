@@ -12,6 +12,8 @@ import customersRouter from './routes/customers.js';
 import dashboardRouter from './routes/dashboard.js';
 import billingRouter from './routes/billing.js';
 import subscriptionsRouter from './routes/subscriptions.js';
+import craftGuideRouter from './routes/craftGuide.js';
+import nozzlesRouter from './routes/nozzles.js';
 
 const app = express();
 
@@ -34,5 +36,7 @@ app.use('/api', customersRouter);
 app.use('/api', dashboardRouter);
 app.use('/api', billingRouter);
 app.use('/api', subscriptionsRouter);
+app.use('/api', craftGuideRouter);
+app.use('/api', nozzlesRouter);
 
 export default app;

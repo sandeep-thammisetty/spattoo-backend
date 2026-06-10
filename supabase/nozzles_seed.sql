@@ -1,0 +1,15 @@
+-- Comprehensive starter nozzle catalog — Wilton, Ateco, PME.
+-- Compiled + cross-checked against authoritative sources (Wilton's own
+-- master/deluxe set listings + tip guides, the Pastry Sampler cross-brand
+-- conversion chart, and the PME SupaTube range). Conservative: only entries
+-- corroborated by a source or canonically well-known are included; obscure or
+-- ambiguous numbers were deliberately left out to be added later via the
+-- ManageNozzles admin screen.
+--
+-- UPSERT (not insert-ignore) so re-running makes this file the source of truth
+-- and corrects/repopulates name/category/description/is_common on existing rows.
+-- Note: re-running WILL overwrite admin edits to seeded rows' descriptive fields.
+--
+-- is_common = the genuine go-to tips a typical baker reaches for; these are
+-- featured first and preferred by the GPT craft-guide suggester.
+

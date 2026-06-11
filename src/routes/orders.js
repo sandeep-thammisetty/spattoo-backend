@@ -308,7 +308,7 @@ router.patch('/orders/:id/status', requireAuth, async (req, res) => {
 // ── PATCH /api/orders/:id ─────────────────────────────────────────────────────
 // Edit order details. Requires a comment explaining the change.
 
-const EDITABLE_FIELDS = ['weight_kg', 'delivery_date', 'delivery_time', 'delivery_mode', 'delivery_address', 'special_instructions'];
+const EDITABLE_FIELDS = ['weight_kg', 'delivery_date', 'delivery_time', 'delivery_mode', 'delivery_address', 'special_instructions', 'flavours'];
 
 router.patch('/orders/:id', requireAuth, async (req, res) => {
   try {
@@ -325,8 +325,14 @@ router.patch('/orders/:id', requireAuth, async (req, res) => {
       .eq('id', req.params.id).eq('baker_id', appUser.baker_id).maybeSingle();
     if (!existing) return res.status(404).json({ error: 'Order not found' });
 
-    // Sanitize: empty strings → null; weight_kg → number or null
+    // Sanitize: empty strings → null; weight_kg → number or null;
+    // flavours → array (jsonb) or null, keeping only entries with a name.
     function sanitize(field, val) {
+      if (field === 'flavours') {
+        if (!Array.isArray(val)) return null;
+        const cleaned = val.filter(f => (f?.name ?? '').toString().trim());
+        return cleaned.length ? cleaned : null;
+      }
       if (val === '' || val === undefined) return null;
       if (field === 'weight_kg') return val === null ? null : parseFloat(val);
       return val;
@@ -338,8 +344,11 @@ router.patch('/orders/:id', requireAuth, async (req, res) => {
       if (!(f in fields)) continue;
       const sanitized = sanitize(f, fields[f]);
       const existing_val = existing[f] ?? null;
-      // Compare as strings to avoid type mismatch (e.g. 2 vs "2")
-      if (String(sanitized ?? '') !== String(existing_val ?? '')) {
+      // flavours is jsonb — compare by value; others compare as strings (e.g. 2 vs "2")
+      const changed = f === 'flavours'
+        ? JSON.stringify(sanitized) !== JSON.stringify(existing_val ?? null)
+        : String(sanitized ?? '') !== String(existing_val ?? '');
+      if (changed) {
         updates[f] = sanitized;
         changes[f] = { from: existing_val, to: sanitized };
       }

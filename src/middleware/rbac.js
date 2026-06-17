@@ -54,7 +54,7 @@ export async function loadPrincipal(user) {
 // Match the verified contact (email/phone from the OTP session) to a customer,
 // gated by a currently-valid invite. Returns { customer_id, baker_id } or null.
 // MVP: if valid invites exist for more than one baker, the most recent wins.
-async function resolveCustomer(user) {
+export async function resolveCustomer(user) {
   const orParts = [];
   if (user.email) orParts.push(`email.eq.${user.email}`);
   if (user.phone) orParts.push(`phone.eq.${user.phone}`);

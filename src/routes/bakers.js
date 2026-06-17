@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { randomBytes } from 'crypto';
 import { supabase } from '../services/supabase.js';
 import { requireAuth } from '../middleware/auth.js';
-import { requireCapability } from '../middleware/rbac.js';
+import { requireCapability, resolveCustomer } from '../middleware/rbac.js';
 import { config } from '../config.js';
 import { logSubscriptionEvent, deriveSubscription } from './subscriptions.js';
 import { PLAN }                from '../constants/subscriptionPlans.js';
@@ -135,7 +135,32 @@ router.get('/baker/profile', requireAuth, async (req, res) => {
       .select('first_name, last_name, baker_id')
       .eq('auth_user_id', req.user.id)
       .maybeSingle();
-    if (!contact) return res.status(404).json({ error: 'No baker account found' });
+    if (!contact) {
+      // A logged-in customer (invite-gated): return their baker's branding so the
+      // designer renders in customer mode. No subscription details for customers.
+      const cust = await resolveCustomer(req.user);
+      if (cust?.baker_id) {
+        const { data: cbaker } = await supabase
+          .from('bakers')
+          .select('id, name, slug, logo_url, primary_color, accent_color, instagram_handle, website_url, tagline')
+          .eq('id', cust.baker_id).single();
+        const { data: c } = await supabase
+          .from('customers').select('first_name, last_name').eq('id', cust.customer_id).maybeSingle();
+        if (cbaker) {
+          return res.json({
+            baker: {
+              id: cbaker.id, name: cbaker.name, slug: cbaker.slug,
+              logo_url:         toPublicUrl(cbaker.logo_url),
+              primary_color:    cbaker.primary_color,  accent_color: cbaker.accent_color,
+              instagram_handle: cbaker.instagram_handle, website_url: cbaker.website_url,
+              tagline:          cbaker.tagline,
+            },
+            user: { firstName: c?.first_name ?? '', lastName: c?.last_name ?? '', email: req.user.email },
+          });
+        }
+      }
+      return res.status(404).json({ error: 'No baker account found' });
+    }
 
     const { data: baker } = await supabase
       .from('bakers')

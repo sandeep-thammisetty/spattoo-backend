@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { randomBytes } from 'crypto';
 import { supabase } from '../services/supabase.js';
 import { requireAuth } from '../middleware/auth.js';
+import { requireCapability } from '../middleware/rbac.js';
 import { config } from '../config.js';
 import { logSubscriptionEvent, deriveSubscription } from './subscriptions.js';
 import { PLAN }                from '../constants/subscriptionPlans.js';
@@ -15,7 +16,7 @@ function toPublicUrl(key) {
 
 const router = Router();
 
-router.post('/admin/bakers', requireAuth, async (req, res) => {
+router.post('/admin/bakers', requireAuth, requireCapability('baker:onboard'), async (req, res) => {
   try {
     const {
       name, slug, email, tagline,
@@ -176,7 +177,7 @@ router.get('/baker/profile', requireAuth, async (req, res) => {
   }
 });
 
-router.patch('/baker/profile', requireAuth, async (req, res) => {
+router.patch('/baker/profile', requireAuth, requireCapability('store:manage'), async (req, res) => {
   try {
     const { data: contact } = await supabase
       .from('baker_appusers')
@@ -226,7 +227,7 @@ router.get('/baker/settings', requireAuth, async (req, res) => {
   }
 });
 
-router.put('/baker/settings', requireAuth, async (req, res) => {
+router.put('/baker/settings', requireAuth, requireCapability('store:manage'), async (req, res) => {
   try {
     const { data: contact } = await supabase
       .from('baker_appusers')
@@ -247,7 +248,7 @@ router.put('/baker/settings', requireAuth, async (req, res) => {
   }
 });
 
-router.get('/admin/bakers', requireAuth, async (req, res) => {
+router.get('/admin/bakers', requireAuth, requireCapability('baker:onboard'), async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('bakers')

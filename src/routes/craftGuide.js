@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { supabase } from '../services/supabase.js';
 import { requireAuth } from '../middleware/auth.js';
+import { requireCapability } from '../middleware/rbac.js';
 import { suggestCraftGuide } from '../services/openai.js';
 
 const router = Router();
@@ -49,7 +50,7 @@ function normalizeNozzleRecs(input) {
 // GET /api/craft-guide?element_ids=id1,id2,...
 // Batch fetch craft guides for a set of element ids. X-Ray collects the piping
 // element ids from an order's design and asks for all of them at once.
-router.get('/craft-guide', requireAuth, async (req, res) => {
+router.get('/craft-guide', requireAuth, requireCapability('design:create'), async (req, res) => {
   try {
     const raw = req.query.element_ids;
     if (!raw) return res.json([]);
@@ -81,7 +82,7 @@ router.get('/craft-guide', requireAuth, async (req, res) => {
 // Returns { nozzle_recs: [{ nozzle_id, brand, number, name, rank, confidence }],
 //           consistency, technique } — recs hydrated from the catalog by id, so
 // GPT can't introduce a tip number that isn't real.
-router.post('/admin/craft-guide/suggest', requireAuth, async (req, res) => {
+router.post('/admin/craft-guide/suggest', requireAuth, requireCapability('catalog:admin'), async (req, res) => {
   try {
     const { imageBase64, mimeType, image_url, name, description } = req.body;
     const imageUrl = image_url || (imageBase64 && mimeType ? `data:${mimeType};base64,${imageBase64}` : null);
@@ -131,7 +132,7 @@ router.post('/admin/craft-guide/suggest', requireAuth, async (req, res) => {
 
 // GET /api/admin/craft-guide/:elementId
 // Single fetch for the authoring editor. Returns null if not yet authored.
-router.get('/admin/craft-guide/:elementId', requireAuth, async (req, res) => {
+router.get('/admin/craft-guide/:elementId', requireAuth, requireCapability('catalog:admin'), async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('element_craft_guide')
@@ -148,7 +149,7 @@ router.get('/admin/craft-guide/:elementId', requireAuth, async (req, res) => {
 
 // PUT /api/admin/craft-guide/:elementId
 // Upsert the craft guide for one element. Body: { nozzle_recs, consistency, technique }
-router.put('/admin/craft-guide/:elementId', requireAuth, async (req, res) => {
+router.put('/admin/craft-guide/:elementId', requireAuth, requireCapability('catalog:admin'), async (req, res) => {
   try {
     const { elementId } = req.params;
     const { consistency, technique } = req.body;

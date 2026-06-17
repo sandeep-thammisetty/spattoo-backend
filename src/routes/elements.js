@@ -2,6 +2,7 @@ import { Router } from 'express';
 import express from 'express';
 import { supabase } from '../services/supabase.js';
 import { requireAuth } from '../middleware/auth.js';
+import { requireCapability } from '../middleware/rbac.js';
 import { config } from '../config.js';
 import { removeBackground } from '../services/removebg.js';
 import { jobQueue } from '../jobs/queue.js';
@@ -13,7 +14,7 @@ function toPublicUrl(key) {
   return `${config.r2.publicUrl}/${key}`;
 }
 
-router.get('/element-types', requireAuth, async (req, res) => {
+router.get('/element-types', requireAuth, requireCapability('design:create'), async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('element_types')
@@ -28,7 +29,7 @@ router.get('/element-types', requireAuth, async (req, res) => {
   }
 });
 
-router.get('/admin/element-types', requireAuth, async (req, res) => {
+router.get('/admin/element-types', requireAuth, requireCapability('catalog:admin'), async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('element_types')
@@ -42,7 +43,7 @@ router.get('/admin/element-types', requireAuth, async (req, res) => {
   }
 });
 
-router.post('/admin/element-types', requireAuth, async (req, res) => {
+router.post('/admin/element-types', requireAuth, requireCapability('catalog:admin'), async (req, res) => {
   try {
     const { name, slug, description, placement_rules, sort_order } = req.body;
     if (!name || !slug) return res.status(400).json({ error: 'name and slug are required' });
@@ -60,7 +61,7 @@ router.post('/admin/element-types', requireAuth, async (req, res) => {
   }
 });
 
-router.patch('/admin/element-types/:id', requireAuth, async (req, res) => {
+router.patch('/admin/element-types/:id', requireAuth, requireCapability('catalog:admin'), async (req, res) => {
   try {
     const { id } = req.params;
     const { name, slug, description, placement_rules, sort_order, is_active } = req.body;
@@ -79,7 +80,7 @@ router.patch('/admin/element-types/:id', requireAuth, async (req, res) => {
   }
 });
 
-router.get('/elements', requireAuth, async (req, res) => {
+router.get('/elements', requireAuth, requireCapability('design:create'), async (req, res) => {
   try {
     const { element_type_id, parents_only } = req.query;
 
@@ -129,6 +130,7 @@ router.get('/elements', requireAuth, async (req, res) => {
 router.post(
   '/admin/remove-bg',
   requireAuth,
+  requireCapability('catalog:admin'),
   express.raw({ type: '*/*', limit: '10mb' }),
   async (req, res) => {
     try {
@@ -141,7 +143,7 @@ router.post(
   }
 );
 
-router.get('/admin/elements', requireAuth, async (req, res) => {
+router.get('/admin/elements', requireAuth, requireCapability('catalog:admin'), async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('cake_elements')
@@ -160,7 +162,7 @@ router.get('/admin/elements', requireAuth, async (req, res) => {
   }
 });
 
-router.patch('/admin/elements/:id', requireAuth, async (req, res) => {
+router.patch('/admin/elements/:id', requireAuth, requireCapability('catalog:admin'), async (req, res) => {
   try {
     const { id } = req.params;
     const { name, description, image_url, thumbnail_url, element_type_id, parent_id, allowed_zones, placement_config, allowed_actions, default_color, sort_order, is_active, file_size } = req.body;
@@ -195,7 +197,7 @@ router.patch('/admin/elements/:id', requireAuth, async (req, res) => {
   }
 });
 
-router.post('/admin/elements', requireAuth, async (req, res) => {
+router.post('/admin/elements', requireAuth, requireCapability('catalog:admin'), async (req, res) => {
   try {
     const { name, description, image_url, thumbnail_url, element_type_id, parent_id, allowed_zones, placement_config, allowed_actions, default_color, sort_order, file_size } = req.body;
     if (!name || !element_type_id) {
@@ -231,7 +233,7 @@ router.post('/admin/elements', requireAuth, async (req, res) => {
   }
 });
 
-router.post('/admin/elements/suggest', requireAuth, async (req, res) => {
+router.post('/admin/elements/suggest', requireAuth, requireCapability('catalog:admin'), async (req, res) => {
   try {
     const { imageBase64, mimeType, elementType } = req.body;
     if (!imageBase64 || !mimeType) return res.status(400).json({ error: 'imageBase64 and mimeType are required' });

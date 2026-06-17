@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { supabase } from '../services/supabase.js';
 import { requireAuth } from '../middleware/auth.js';
+import { requireCapability } from '../middleware/rbac.js';
 import { PLAN }                from '../constants/subscriptionPlans.js';
 import { PERIOD }              from '../constants/billingPeriods.js';
 import { SUBSCRIPTION_STATUS } from '../constants/subscriptionStatuses.js';
@@ -59,7 +60,7 @@ router.get('/admin/subscription-plans', requireAuth, async (req, res) => {
 });
 
 // ── POST /admin/subscription-plans ────────────────────────────────────────────
-router.post('/admin/subscription-plans', requireAuth, async (req, res) => {
+router.post('/admin/subscription-plans', requireAuth, requireCapability('subscription:override'), async (req, res) => {
   try {
     const { name, display_name, price_monthly, price_yearly, features, sort_order } = req.body;
     if (!name || !display_name) return res.status(400).json({ error: 'name and display_name are required' });
@@ -74,7 +75,7 @@ router.post('/admin/subscription-plans', requireAuth, async (req, res) => {
 });
 
 // ── PATCH /admin/subscription-plans/:id ───────────────────────────────────────
-router.patch('/admin/subscription-plans/:id', requireAuth, async (req, res) => {
+router.patch('/admin/subscription-plans/:id', requireAuth, requireCapability('subscription:override'), async (req, res) => {
   try {
     const ALLOWED = ['display_name', 'price_monthly', 'price_yearly', 'features', 'is_active', 'sort_order'];
     const updates = {};
@@ -89,7 +90,7 @@ router.patch('/admin/subscription-plans/:id', requireAuth, async (req, res) => {
 });
 
 // ── GET /admin/bakers/subscriptions ───────────────────────────────────────────
-router.get('/admin/bakers/subscriptions', requireAuth, async (req, res) => {
+router.get('/admin/bakers/subscriptions', requireAuth, requireCapability('baker:support'), async (req, res) => {
   try {
     const { data, error } = await supabase.rpc('get_baker_subscriptions_admin');
     if (error) return res.status(500).json({ error: error.message });
@@ -98,7 +99,7 @@ router.get('/admin/bakers/subscriptions', requireAuth, async (req, res) => {
 });
 
 // ── GET /admin/bakers/:id/subscription ────────────────────────────────────────
-router.get('/admin/bakers/:id/subscription', requireAuth, async (req, res) => {
+router.get('/admin/bakers/:id/subscription', requireAuth, requireCapability('baker:support'), async (req, res) => {
   try {
     const { data: baker, error } = await supabase
       .from('bakers').select('id, name, email')
@@ -118,7 +119,7 @@ router.get('/admin/bakers/:id/subscription', requireAuth, async (req, res) => {
 
 // ── POST /admin/bakers/:id/subscription ───────────────────────────────────────
 // Admin override — create a new baker_subscriptions row with the given plan/status/end date
-router.post('/admin/bakers/:id/subscription', requireAuth, async (req, res) => {
+router.post('/admin/bakers/:id/subscription', requireAuth, requireCapability('subscription:override'), async (req, res) => {
   try {
     const { plan_name, billing_period_id, status, end_date, note } = req.body;
     if (!plan_name) return res.status(400).json({ error: 'plan_name is required' });
@@ -180,7 +181,7 @@ router.post('/admin/bakers/:id/subscription', requireAuth, async (req, res) => {
 });
 
 // ── GET /admin/bakers/:id/payments ────────────────────────────────────────────
-router.get('/admin/bakers/:id/payments', requireAuth, async (req, res) => {
+router.get('/admin/bakers/:id/payments', requireAuth, requireCapability('baker:support'), async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('payments')
@@ -196,7 +197,7 @@ router.get('/admin/bakers/:id/payments', requireAuth, async (req, res) => {
 });
 
 // ── GET /baker/subscription/history ───────────────────────────────────────────
-router.get('/baker/subscription/history', requireAuth, async (req, res) => {
+router.get('/baker/subscription/history', requireAuth, requireCapability('billing:manage'), async (req, res) => {
   try {
     const { data: contact } = await supabase
       .from('baker_appusers').select('baker_id')

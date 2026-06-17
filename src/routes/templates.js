@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { supabase } from '../services/supabase.js';
 import { requireAuth, attachBakerContext } from '../middleware/auth.js';
+import { requireCapability } from '../middleware/rbac.js';
 import { config } from '../config.js';
 import { jobQueue } from '../jobs/queue.js';
 
@@ -24,7 +25,7 @@ function withTagsAndAttrs({ template_tags, cake_template_attrs, ...t }) {
   };
 }
 
-router.get('/templates', requireAuth, attachBakerContext, async (req, res) => {
+router.get('/templates', requireAuth, requireCapability('design:create'), attachBakerContext, async (req, res) => {
   try {
     const { type } = req.query;
 
@@ -57,7 +58,7 @@ router.get('/templates', requireAuth, attachBakerContext, async (req, res) => {
   }
 });
 
-router.get('/admin/templates', requireAuth, async (req, res) => {
+router.get('/admin/templates', requireAuth, requireCapability('catalog:admin'), async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('cake_templates')
@@ -71,7 +72,7 @@ router.get('/admin/templates', requireAuth, async (req, res) => {
   }
 });
 
-router.get('/templates/:id', requireAuth, async (req, res) => {
+router.get('/templates/:id', requireAuth, requireCapability('design:create'), async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('cake_templates')
@@ -86,7 +87,7 @@ router.get('/templates/:id', requireAuth, async (req, res) => {
   }
 });
 
-router.post('/admin/templates', requireAuth, async (req, res) => {
+router.post('/admin/templates', requireAuth, requireCapability('catalog:admin'), async (req, res) => {
   try {
     const { name, shape, tier_count, type, offering, baker_id, parent_template_id, design, thumbnail_url, sort_order } = req.body;
     if (!name || !design) {
@@ -123,7 +124,7 @@ router.post('/admin/templates', requireAuth, async (req, res) => {
   }
 });
 
-router.patch('/admin/templates/:id', requireAuth, async (req, res) => {
+router.patch('/admin/templates/:id', requireAuth, requireCapability('catalog:admin'), async (req, res) => {
   try {
     const allowed = ['name', 'shape', 'tier_count', 'type', 'offering', 'design', 'thumbnail_url', 'sort_order', 'is_active'];
     const updates = Object.fromEntries(Object.entries(req.body).filter(([k]) => allowed.includes(k)));
@@ -140,7 +141,7 @@ router.patch('/admin/templates/:id', requireAuth, async (req, res) => {
   }
 });
 
-router.delete('/admin/templates/:id', requireAuth, async (req, res) => {
+router.delete('/admin/templates/:id', requireAuth, requireCapability('catalog:admin'), async (req, res) => {
   try {
     const { error } = await supabase
       .from('cake_templates')

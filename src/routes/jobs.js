@@ -2,10 +2,11 @@ import { Router } from 'express';
 import { supabase } from '../services/supabase.js';
 import { jobQueue } from '../jobs/queue.js';
 import { requireAuth } from '../middleware/auth.js';
+import { requireCapability } from '../middleware/rbac.js';
 
 const router = Router();
 
-router.post('/jobs/extract', requireAuth, async (req, res) => {
+router.post('/jobs/extract', requireAuth, requireCapability('catalog:admin'), async (req, res) => {
   try {
     const { imageUrl } = req.body;
     if (!imageUrl) {

@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { supabase } from '../services/supabase.js';
 import { requireAuth } from '../middleware/auth.js';
+import { requireCapability } from '../middleware/rbac.js';
 import { config } from '../config.js';
 import { notifyOrderPlaced } from '../services/notifications.js';
 
@@ -193,7 +194,7 @@ router.post('/orders', async (req, res) => {
 // Baker-facing: list orders for the authenticated baker's account.
 // Query params: status, from, to (ISO dates)
 
-router.get('/orders', requireAuth, async (req, res) => {
+router.get('/orders', requireAuth, requireCapability('order:view'), async (req, res) => {
   try {
     const { data: appUser } = await supabase
       .from('baker_appusers')
@@ -235,7 +236,7 @@ router.get('/orders', requireAuth, async (req, res) => {
 // ── GET /api/orders/:id ───────────────────────────────────────────────────────
 // Returns full order including design_snapshot (for reconstructing the cake).
 
-router.get('/orders/:id', requireAuth, async (req, res) => {
+router.get('/orders/:id', requireAuth, requireCapability('order:view'), async (req, res) => {
   try {
     const { data: appUser } = await supabase
       .from('baker_appusers')
@@ -268,7 +269,7 @@ router.get('/orders/:id', requireAuth, async (req, res) => {
 
 const VALID_STATUSES = ['pending', 'approved', 'in_progress', 'ready', 'delivered', 'cancelled'];
 
-router.patch('/orders/:id/status', requireAuth, async (req, res) => {
+router.patch('/orders/:id/status', requireAuth, requireCapability('order:manage'), async (req, res) => {
   try {
     const { status, comment } = req.body;
     if (!VALID_STATUSES.includes(status)) {
@@ -310,7 +311,7 @@ router.patch('/orders/:id/status', requireAuth, async (req, res) => {
 
 const EDITABLE_FIELDS = ['weight_kg', 'delivery_date', 'delivery_time', 'delivery_mode', 'delivery_address', 'special_instructions', 'flavours'];
 
-router.patch('/orders/:id', requireAuth, async (req, res) => {
+router.patch('/orders/:id', requireAuth, requireCapability('order:manage'), async (req, res) => {
   try {
     const { comment, ...fields } = req.body;
     if (!comment?.trim()) return res.status(400).json({ error: 'comment is required when editing an order' });
@@ -378,7 +379,7 @@ router.patch('/orders/:id', requireAuth, async (req, res) => {
 // ── PATCH /api/orders/:id/design ─────────────────────────────────────────────
 // Updates the 3D design snapshot + thumbnail. Requires a comment.
 
-router.patch('/orders/:id/design', requireAuth, async (req, res) => {
+router.patch('/orders/:id/design', requireAuth, requireCapability('order:manage'), async (req, res) => {
   try {
     const { designSnapshot, designThumbnailKey, comment } = req.body;
     if (!designSnapshot)    return res.status(400).json({ error: 'designSnapshot is required' });
@@ -419,7 +420,7 @@ router.patch('/orders/:id/design', requireAuth, async (req, res) => {
 
 // ── GET /api/orders/:id/audit ─────────────────────────────────────────────────
 
-router.get('/orders/:id/audit', requireAuth, async (req, res) => {
+router.get('/orders/:id/audit', requireAuth, requireCapability('order:view'), async (req, res) => {
   try {
     const { data: appUser } = await supabase
       .from('baker_appusers').select('baker_id')

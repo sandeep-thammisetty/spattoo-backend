@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { supabase } from '../services/supabase.js';
 import { requireAuth } from '../middleware/auth.js';
+import { requireCapability } from '../middleware/rbac.js';
 import { jobQueue } from '../jobs/queue.js';
 import { config } from '../config.js';
 
@@ -79,7 +80,7 @@ const router = Router();
 
 // ── Tags vocabulary ───────────────────────────────────────────────────────────
 
-router.get('/tags', requireAuth, async (req, res) => {
+router.get('/tags', requireAuth, requireCapability('design:create'), async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('tags')
@@ -94,7 +95,7 @@ router.get('/tags', requireAuth, async (req, res) => {
   }
 });
 
-router.get('/admin/tags', requireAuth, async (req, res) => {
+router.get('/admin/tags', requireAuth, requireCapability('catalog:admin'), async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('tags')
@@ -108,7 +109,7 @@ router.get('/admin/tags', requireAuth, async (req, res) => {
   }
 });
 
-router.post('/admin/tags', requireAuth, async (req, res) => {
+router.post('/admin/tags', requireAuth, requireCapability('catalog:admin'), async (req, res) => {
   try {
     const { name, slug, category, ai_assignable = false, sort_order = 0 } = req.body;
     if (!name || !slug || !category) {
@@ -126,7 +127,7 @@ router.post('/admin/tags', requireAuth, async (req, res) => {
   }
 });
 
-router.patch('/admin/tags/:id', requireAuth, async (req, res) => {
+router.patch('/admin/tags/:id', requireAuth, requireCapability('catalog:admin'), async (req, res) => {
   try {
     const allowed = ['name', 'slug', 'category', 'ai_assignable', 'sort_order', 'is_active'];
     const updates = Object.fromEntries(Object.entries(req.body).filter(([k]) => allowed.includes(k)));
@@ -143,7 +144,7 @@ router.patch('/admin/tags/:id', requireAuth, async (req, res) => {
   }
 });
 
-router.delete('/admin/tags/:id', requireAuth, async (req, res) => {
+router.delete('/admin/tags/:id', requireAuth, requireCapability('catalog:admin'), async (req, res) => {
   try {
     // Check for existing usage before deleting
     const [{ count: ec }, { count: tc }] = await Promise.all([
@@ -163,7 +164,7 @@ router.delete('/admin/tags/:id', requireAuth, async (req, res) => {
 
 // ── Element tags ──────────────────────────────────────────────────────────────
 
-router.get('/admin/elements/:id/tags', requireAuth, async (req, res) => {
+router.get('/admin/elements/:id/tags', requireAuth, requireCapability('catalog:admin'), async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('element_tags')
@@ -177,7 +178,7 @@ router.get('/admin/elements/:id/tags', requireAuth, async (req, res) => {
 });
 
 // Replace all tags for an element
-router.put('/admin/elements/:id/tags', requireAuth, async (req, res) => {
+router.put('/admin/elements/:id/tags', requireAuth, requireCapability('catalog:admin'), async (req, res) => {
   try {
     const { tagIds = [] } = req.body;
     const elementId = req.params.id;
@@ -194,7 +195,7 @@ router.put('/admin/elements/:id/tags', requireAuth, async (req, res) => {
 });
 
 // Re-run AI tagging for an element — runs synchronously, returns updated tags
-router.post('/admin/elements/:id/retag', requireAuth, async (req, res) => {
+router.post('/admin/elements/:id/retag', requireAuth, requireCapability('catalog:admin'), async (req, res) => {
   try {
     const { data: el, error } = await supabase
       .from('cake_elements')
@@ -213,7 +214,7 @@ router.post('/admin/elements/:id/retag', requireAuth, async (req, res) => {
 
 // ── Template tags ─────────────────────────────────────────────────────────────
 
-router.get('/admin/templates/:id/tags', requireAuth, async (req, res) => {
+router.get('/admin/templates/:id/tags', requireAuth, requireCapability('catalog:admin'), async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('template_tags')
@@ -226,7 +227,7 @@ router.get('/admin/templates/:id/tags', requireAuth, async (req, res) => {
   }
 });
 
-router.put('/admin/templates/:id/tags', requireAuth, async (req, res) => {
+router.put('/admin/templates/:id/tags', requireAuth, requireCapability('catalog:admin'), async (req, res) => {
   try {
     const { tagIds = [] } = req.body;
     const templateId = req.params.id;
@@ -242,7 +243,7 @@ router.put('/admin/templates/:id/tags', requireAuth, async (req, res) => {
   }
 });
 
-router.post('/admin/templates/:id/retag', requireAuth, async (req, res) => {
+router.post('/admin/templates/:id/retag', requireAuth, requireCapability('catalog:admin'), async (req, res) => {
   try {
     const { data: tmpl, error } = await supabase
       .from('cake_templates')
@@ -261,7 +262,7 @@ router.post('/admin/templates/:id/retag', requireAuth, async (req, res) => {
 
 // ── Template attrs ────────────────────────────────────────────────────────────
 
-router.get('/admin/templates/:id/attrs', requireAuth, async (req, res) => {
+router.get('/admin/templates/:id/attrs', requireAuth, requireCapability('catalog:admin'), async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('cake_template_attrs')
@@ -275,7 +276,7 @@ router.get('/admin/templates/:id/attrs', requireAuth, async (req, res) => {
   }
 });
 
-router.put('/admin/templates/:id/attrs', requireAuth, async (req, res) => {
+router.put('/admin/templates/:id/attrs', requireAuth, requireCapability('catalog:admin'), async (req, res) => {
   try {
     const { min_weight_kg, min_age, max_age } = req.body;
     const attrs = {

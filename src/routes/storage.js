@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { getSignedUploadUrl, deleteObject } from '../services/r2.js';
 import { requireAuth } from '../middleware/auth.js';
+import { requireCapability } from '../middleware/rbac.js';
 import { config } from '../config.js';
 
 const router = Router();
@@ -15,7 +16,7 @@ const ALLOWED_FOLDERS = [
   'orders/thumbnails',
 ];
 
-router.post('/storage/sign-upload', requireAuth, async (req, res) => {
+router.post('/storage/sign-upload', requireAuth, requireCapability('design:create'), async (req, res) => {
   try {
     const { folder, filename, contentType } = req.body;
     if (!folder || !filename || !contentType) {
@@ -44,7 +45,7 @@ function toKey(raw) {
   return k.replace(/^\/+/, '');
 }
 
-router.post('/storage/delete', requireAuth, async (req, res) => {
+router.post('/storage/delete', requireAuth, requireCapability('design:create'), async (req, res) => {
   try {
     const key = toKey(req.body?.key);
     if (!key) return res.status(400).json({ error: 'key is required' });

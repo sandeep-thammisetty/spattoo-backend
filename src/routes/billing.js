@@ -2,6 +2,7 @@ import { Router } from 'express';
 import crypto from 'crypto';
 import { supabase } from '../services/supabase.js';
 import { requireAuth } from '../middleware/auth.js';
+import { requireCapability } from '../middleware/rbac.js';
 import { config } from '../config.js';
 import { logSubscriptionEvent, deriveSubscription } from './subscriptions.js';
 import { SUBSCRIPTION_STATUS } from '../constants/subscriptionStatuses.js';
@@ -70,7 +71,7 @@ router.get('/billing/debug-me', requireAuth, async (req, res) => {
 });
 
 // ── GET /billing/periods ──────────────────────────────────────────────────────
-router.get('/billing/periods', requireAuth, async (req, res) => {
+router.get('/billing/periods', requireAuth, requireCapability('billing:manage'), async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('billing_periods')
@@ -85,7 +86,7 @@ router.get('/billing/periods', requireAuth, async (req, res) => {
 });
 
 // ── GET /billing/status ───────────────────────────────────────────────────────
-router.get('/billing/status', requireAuth, async (req, res) => {
+router.get('/billing/status', requireAuth, requireCapability('billing:manage'), async (req, res) => {
   try {
     const baker = await getBakerForUser(req.user.id, 'id');
     if (!baker) return res.status(404).json({ error: 'Baker not found' });
@@ -104,7 +105,7 @@ router.get('/billing/status', requireAuth, async (req, res) => {
 });
 
 // ── POST /billing/subscribe ───────────────────────────────────────────────────
-router.post('/billing/subscribe', requireAuth, async (req, res) => {
+router.post('/billing/subscribe', requireAuth, requireCapability('billing:manage'), async (req, res) => {
   try {
     const { tier, billing_period_id } = req.body;
     if (!tier || !billing_period_id) {
@@ -163,7 +164,7 @@ router.post('/billing/subscribe', requireAuth, async (req, res) => {
 });
 
 // ── POST /billing/cancel ──────────────────────────────────────────────────────
-router.post('/billing/cancel', requireAuth, async (req, res) => {
+router.post('/billing/cancel', requireAuth, requireCapability('billing:manage'), async (req, res) => {
   try {
     const baker = await getBakerForUser(req.user.id, 'id, billing_subscription_id');
     if (!baker) return res.status(404).json({ error: 'Baker not found' });
@@ -184,7 +185,7 @@ router.post('/billing/cancel', requireAuth, async (req, res) => {
 });
 
 // ── POST /billing/activate-spark ─────────────────────────────────────────────
-router.post('/billing/activate-spark', requireAuth, async (req, res) => {
+router.post('/billing/activate-spark', requireAuth, requireCapability('billing:manage'), async (req, res) => {
   try {
     const baker = await getBakerForUser(req.user.id, 'id, subscription_status_id');
     if (!baker) return res.status(404).json({ error: 'Baker not found' });
@@ -224,7 +225,7 @@ router.post('/billing/activate-spark', requireAuth, async (req, res) => {
 });
 
 // ── GET /billing/payments ─────────────────────────────────────────────────────
-router.get('/billing/payments', requireAuth, async (req, res) => {
+router.get('/billing/payments', requireAuth, requireCapability('billing:manage'), async (req, res) => {
   try {
     const baker = await getBakerForUser(req.user.id, 'id');
     if (!baker) return res.status(404).json({ error: 'Baker not found' });

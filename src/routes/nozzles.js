@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { supabase } from '../services/supabase.js';
 import { requireAuth } from '../middleware/auth.js';
+import { requireCapability } from '../middleware/rbac.js';
 
 const router = Router();
 
@@ -30,7 +31,7 @@ function buildPayload(body, { partial = false } = {}) {
 // ── Read (any authenticated user — admin authoring + future baker learning screen) ──
 
 // GET /api/nozzles?category=open_star&active=true
-router.get('/nozzles', requireAuth, async (req, res) => {
+router.get('/nozzles', requireAuth, requireCapability('design:create'), async (req, res) => {
   try {
     let q = supabase.from('nozzles').select(FIELDS);
     if (req.query.category) q = q.eq('category', String(req.query.category));
@@ -51,7 +52,7 @@ router.get('/nozzles', requireAuth, async (req, res) => {
 // ── Admin CRUD ──────────────────────────────────────────────────────────────
 
 // POST /api/admin/nozzles
-router.post('/admin/nozzles', requireAuth, async (req, res) => {
+router.post('/admin/nozzles', requireAuth, requireCapability('catalog:admin'), async (req, res) => {
   try {
     const payload = buildPayload(req.body);
     if (!payload.brand) return res.status(400).json({ error: 'brand is required' });
@@ -74,7 +75,7 @@ router.post('/admin/nozzles', requireAuth, async (req, res) => {
 // Body: { nozzles: [ { brand, number, name, category, description, is_common, sort_order } ] }
 // Per-row validation; valid rows are upserted ignoring (brand, number) duplicates.
 // Returns { created, skipped, errors: [{ row, reason }] }.
-router.post('/admin/nozzles/bulk', requireAuth, async (req, res) => {
+router.post('/admin/nozzles/bulk', requireAuth, requireCapability('catalog:admin'), async (req, res) => {
   try {
     const rows = req.body?.nozzles;
     if (!Array.isArray(rows) || rows.length === 0) {
@@ -109,7 +110,7 @@ router.post('/admin/nozzles/bulk', requireAuth, async (req, res) => {
 });
 
 // PATCH /api/admin/nozzles/:id
-router.patch('/admin/nozzles/:id', requireAuth, async (req, res) => {
+router.patch('/admin/nozzles/:id', requireAuth, requireCapability('catalog:admin'), async (req, res) => {
   try {
     const payload = buildPayload(req.body, { partial: true });
     payload.updated_at = new Date().toISOString();
@@ -132,7 +133,7 @@ router.patch('/admin/nozzles/:id', requireAuth, async (req, res) => {
 });
 
 // DELETE /api/admin/nozzles/:id
-router.delete('/admin/nozzles/:id', requireAuth, async (req, res) => {
+router.delete('/admin/nozzles/:id', requireAuth, requireCapability('catalog:admin'), async (req, res) => {
   try {
     const { error } = await supabase.from('nozzles').delete().eq('id', req.params.id);
     if (error) return res.status(500).json({ error: error.message });

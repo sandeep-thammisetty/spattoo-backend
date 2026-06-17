@@ -1,11 +1,12 @@
 import { Router } from 'express';
 import { supabase } from '../services/supabase.js';
 import { requireAuth } from '../middleware/auth.js';
+import { requireCapability } from '../middleware/rbac.js';
 
 const router = Router();
 
 // ── GET /api/baker/dashboard ──────────────────────────────────────────────────
-router.get('/baker/dashboard', requireAuth, async (req, res) => {
+router.get('/baker/dashboard', requireAuth, requireCapability('order:view'), async (req, res) => {
   try {
     const { data: appUser } = await supabase
       .from('baker_appusers').select('baker_id')
@@ -163,7 +164,7 @@ router.get('/baker/dashboard', requireAuth, async (req, res) => {
 // Lightweight endpoint — only status breakdown + delivery split for a period.
 // Used by the dashboard period selector without refetching everything.
 
-router.get('/baker/dashboard/breakdown', requireAuth, async (req, res) => {
+router.get('/baker/dashboard/breakdown', requireAuth, requireCapability('order:view'), async (req, res) => {
   try {
     const { data: appUser } = await supabase
       .from('baker_appusers').select('baker_id')

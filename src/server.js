@@ -14,6 +14,7 @@ import billingRouter from './routes/billing.js';
 import subscriptionsRouter from './routes/subscriptions.js';
 import craftGuideRouter from './routes/craftGuide.js';
 import nozzlesRouter from './routes/nozzles.js';
+import rbacRouter from './routes/rbac.js';
 
 const app = express();
 
@@ -38,5 +39,6 @@ app.use('/api', billingRouter);
 app.use('/api', subscriptionsRouter);
 app.use('/api', craftGuideRouter);
 app.use('/api', nozzlesRouter);
+app.use('/api', rbacRouter);
 
 export default app;

@@ -309,9 +309,8 @@ router.post('/baker/customers/invite', requireAuth, requireCapability('customer:
       .single();
     if (iErr) return res.status(500).json({ error: iErr.message });
 
-    // The row id is the link reference. It grants nothing on its own — OTP gates access.
-    const base = config.storefront.baseUrl;
-    const link = `${base}/${baker.slug}?invite=${invite.id}`;
+    // Subdomain link: {slug}.<storefront domain>. The invite id grants nothing — OTP gates access.
+    const link = `${config.storefront.urlTemplate.replace('{slug}', baker.slug)}/?invite=${invite.id}`;
 
     // Best-effort email send (SMS/WhatsApp recorded but not yet sent).
     const logoUrl = baker.logo_url

@@ -47,9 +47,10 @@ export const config = {
     pass: process.env.SMTP_PASS,
     from: process.env.SMTP_FROM || process.env.SMTP_USER,
   },
-  // Base URL of the customer-facing storefront. The invite link is
-  // `${baseUrl}/<baker-slug>?invite=<invite-id>`. Optional (falls back to a
-  // relative path) until the storefront host/subdomain exists.
-  storefront: { baseUrl: process.env.STOREFRONT_BASE_URL || '' },
+  // Customer storefront URL template; `{slug}` is replaced with the baker slug
+  // (subdomain model). Invite link = `${template-with-slug}/?invite=<id>`.
+  //   dev:  http://{slug}.localhost:5173
+  //   prod: https://{slug}.spattoo.com
+  storefront: { urlTemplate: process.env.STOREFRONT_URL_TEMPLATE || 'https://{slug}.spattoo.com' },
   port:     parseInt(process.env.PORT || '3000', 10),
 };

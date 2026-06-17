@@ -21,6 +21,7 @@ export async function loadPrincipal(user) {
 
   let role = null;
   let bakerId = null;
+  let customerId = null;
 
   if (admin) {
     role = admin.role; // 'admin' | 'admin_staff'
@@ -34,11 +35,47 @@ export async function loadPrincipal(user) {
     if (appUser) {
       role = appUser.role;        // 'owner' | 'staff'
       bakerId = appUser.baker_id;
+    } else {
+      // 3. Customer? Access is invite-gated: a verified contact only becomes a
+      //    'customer' principal while a VALID invite exists. Baker context comes
+      //    from that invite — there is no global customer session.
+      const resolved = await resolveCustomer(user);
+      if (resolved) {
+        role = 'customer';
+        bakerId = resolved.baker_id;
+        customerId = resolved.customer_id;
+      }
     }
-    // 3. (future) customers table → role = 'customer', once customers authenticate.
   }
 
-  return { role, bakerId, capabilities: await capabilitiesForRole(role) };
+  return { role, bakerId, customerId, capabilities: await capabilitiesForRole(role) };
+}
+
+// Match the verified contact (email/phone from the OTP session) to a customer,
+// gated by a currently-valid invite. Returns { customer_id, baker_id } or null.
+// MVP: if valid invites exist for more than one baker, the most recent wins.
+async function resolveCustomer(user) {
+  const orParts = [];
+  if (user.email) orParts.push(`email.eq.${user.email}`);
+  if (user.phone) orParts.push(`phone.eq.${user.phone}`);
+  if (!orParts.length) return null;
+
+  const { data: customers } = await supabase
+    .from('customers')
+    .select('id')
+    .or(orParts.join(','));
+  if (!customers?.length) return null;
+
+  const nowIso = new Date().toISOString();
+  const { data: invites } = await supabase
+    .from('customer_invites')
+    .select('customer_id, baker_id, expires_at')
+    .in('customer_id', customers.map(c => c.id))
+    .in('status', ['pending', 'sent', 'opened'])      // not completed/expired/revoked
+    .order('created_at', { ascending: false });
+
+  const valid = (invites ?? []).find(iv => !iv.expires_at || iv.expires_at > nowIso);
+  return valid ? { customer_id: valid.customer_id, baker_id: valid.baker_id } : null;
 }
 
 // Capability keys for a role. is_super → ['*'] (matches every capability).
@@ -69,6 +106,7 @@ export async function resolvePrincipal(req, res, next) {
     const p = await loadPrincipal(req.user);
     req.role = p.role;
     req.bakerId = p.bakerId;
+    req.customerId = p.customerId;
     req.capabilities = p.capabilities;
     next();
   } catch (err) {
@@ -86,6 +124,7 @@ export function requireCapability(cap) {
         const p = await loadPrincipal(req.user);
         req.role = p.role;
         req.bakerId = p.bakerId;
+        req.customerId = p.customerId;
         req.capabilities = p.capabilities;
       }
       if (hasCapability(req.capabilities, cap)) return next();

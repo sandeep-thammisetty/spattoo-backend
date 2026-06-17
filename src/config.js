@@ -21,6 +21,7 @@ export const config = {
   supabase: {
     url:        process.env.SUPABASE_URL,
     serviceKey: process.env.SUPABASE_SERVICE_KEY,
+    anonKey:    process.env.SUPABASE_ANON_KEY,  // public key — for customer OTP (signInWithOtp/verifyOtp)
   },
   openai:   { apiKey: process.env.OPENAI_API_KEY },
   removeBg: { apiKey: process.env.REMOVE_BG_API_KEY },
@@ -46,5 +47,9 @@ export const config = {
     pass: process.env.SMTP_PASS,
     from: process.env.SMTP_FROM || process.env.SMTP_USER,
   },
+  // Base URL of the customer-facing storefront. The invite link is
+  // `${baseUrl}/<baker-slug>?invite=<invite-id>`. Optional (falls back to a
+  // relative path) until the storefront host/subdomain exists.
+  storefront: { baseUrl: process.env.STOREFRONT_BASE_URL || '' },
   port:     parseInt(process.env.PORT || '3000', 10),
 };

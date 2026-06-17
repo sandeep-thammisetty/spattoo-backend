@@ -3,6 +3,14 @@ import { config } from '../config.js';
 
 export const supabase = createClient(config.supabase.url, config.supabase.serviceKey);
 
+// Anon client for customer OTP auth ops (signInWithOtp / verifyOtp). Uses the
+// public anon key, not the service key, and never persists a session server-side.
+export const supabaseAuth = config.supabase.anonKey
+  ? createClient(config.supabase.url, config.supabase.anonKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    })
+  : null;
+
 export async function getJob(jobId) {
   const { data, error } = await supabase
     .from('jobs')

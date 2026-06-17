@@ -15,6 +15,7 @@ import subscriptionsRouter from './routes/subscriptions.js';
 import craftGuideRouter from './routes/craftGuide.js';
 import nozzlesRouter from './routes/nozzles.js';
 import rbacRouter from './routes/rbac.js';
+import storefrontRouter from './routes/storefront.js';
 
 const app = express();
 
@@ -40,5 +41,6 @@ app.use('/api', subscriptionsRouter);
 app.use('/api', craftGuideRouter);
 app.use('/api', nozzlesRouter);
 app.use('/api', rbacRouter);
+app.use('/api', storefrontRouter);
 
 export default app;

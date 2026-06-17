@@ -14,6 +14,7 @@ router.get('/me', requireAuth, resolvePrincipal, (req, res) => {
     email: req.user.email,
     role: req.role,                 // null when the identity isn't recognized
     bakerId: req.bakerId,
+    customerId: req.customerId,     // set when the principal is an invited customer
     capabilities: req.capabilities, // ['*'] for super admin
   });
 });

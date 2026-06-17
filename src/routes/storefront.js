@@ -169,10 +169,20 @@ router.post('/invite/:id/verify-otp', async (req, res) => {
     const to = contactFor(channel, invite.customers);
     if (!to) return res.status(400).json({ error: `No ${channel} contact on file` });
 
-    const { data, error } = channel === 'email'
-      ? await supabaseAuth.auth.verifyOtp({ email: to, token: code, type: 'email' })
-      : await supabaseAuth.auth.verifyOtp({ phone: to, token: code, type: 'sms' });
-    if (error || !data?.session) return res.status(401).json({ error: error?.message || 'Invalid or expired code' });
+    // Verify type depends on how the OTP was issued: new user → 'signup',
+    // existing user login → 'magiclink', plus the unified 'email'. We don't know
+    // which up front, so try in order — a wrong-type attempt doesn't consume the
+    // token, so the correct type still succeeds.
+    let data = null, error = null;
+    const types = channel === 'email' ? ['email', 'magiclink', 'signup'] : ['sms'];
+    for (const type of types) {
+      const r = channel === 'email'
+        ? await supabaseAuth.auth.verifyOtp({ email: to, token: code, type })
+        : await supabaseAuth.auth.verifyOtp({ phone: to, token: code, type });
+      if (r.data?.session) { data = r.data; error = null; break; }
+      error = r.error;
+    }
+    if (!data?.session) return res.status(401).json({ error: error?.message || 'Invalid or expired code' });
 
     res.json({
       session: {

@@ -248,6 +248,78 @@ router.put('/baker/settings', requireAuth, requireCapability('store:manage'), as
   }
 });
 
+// ── GET /api/baker/flavours ───────────────────────────────────────────────────
+// Auth. The global flavour master list, flagged with this baker's on/off state:
+//   [{ id, name, description, excluded }]
+// `excluded: true` means the baker has switched it off and it's hidden from their
+// customers (mirrors the resolution in the public GET /api/flavours). Custom baker
+// flavours are managed separately, not here.
+router.get('/baker/flavours', requireAuth, async (req, res) => {
+  try {
+    const { data: contact } = await supabase
+      .from('baker_appusers')
+      .select('baker_id')
+      .eq('auth_user_id', req.user.id)
+      .maybeSingle();
+    if (!contact) return res.status(404).json({ error: 'No baker account found' });
+
+    const [{ data: globals }, { data: exclusions }] = await Promise.all([
+      supabase.from('flavours')
+        .select('id, name, description, sort_order')
+        .eq('is_active', true)
+        .order('sort_order').order('name'),
+      supabase.from('baker_flavour_exclusions')
+        .select('flavour_id')
+        .eq('baker_id', contact.baker_id),
+    ]);
+
+    const excluded = new Set((exclusions ?? []).map(e => e.flavour_id));
+    res.json((globals ?? []).map(f => ({
+      id: f.id, name: f.name, description: f.description, excluded: excluded.has(f.id),
+    })));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── PUT /api/baker/flavours/exclusions ────────────────────────────────────────
+// Auth + store:manage. Body: { excluded_flavour_ids: [uuid, ...] }
+// Replaces this baker's exclusion set (clear, then insert the new set). Only ids that
+// are real active global flavours are written, so the table can't accumulate junk.
+router.put('/baker/flavours/exclusions', requireAuth, requireCapability('store:manage'), async (req, res) => {
+  try {
+    const { data: contact } = await supabase
+      .from('baker_appusers')
+      .select('baker_id')
+      .eq('auth_user_id', req.user.id)
+      .maybeSingle();
+    if (!contact) return res.status(404).json({ error: 'No baker account found' });
+
+    const requested = Array.isArray(req.body?.excluded_flavour_ids) ? req.body.excluded_flavour_ids : null;
+    if (!requested) return res.status(400).json({ error: 'excluded_flavour_ids must be an array' });
+
+    // Keep only ids that are real active global flavours.
+    const { data: globals } = await supabase.from('flavours').select('id').eq('is_active', true);
+    const valid = new Set((globals ?? []).map(f => f.id));
+    const ids = [...new Set(requested)].filter(id => valid.has(id));
+
+    // Replace the set: clear this baker's exclusions, then insert the new ones.
+    const { error: delErr } = await supabase
+      .from('baker_flavour_exclusions').delete().eq('baker_id', contact.baker_id);
+    if (delErr) return res.status(500).json({ error: delErr.message });
+
+    if (ids.length) {
+      const rows = ids.map(flavour_id => ({ baker_id: contact.baker_id, flavour_id }));
+      const { error: insErr } = await supabase.from('baker_flavour_exclusions').insert(rows);
+      if (insErr) return res.status(500).json({ error: insErr.message });
+    }
+
+    res.json({ ok: true, excluded_count: ids.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get('/admin/bakers', requireAuth, requireCapability('baker:onboard'), async (req, res) => {
   try {
     const { data, error } = await supabase

@@ -165,7 +165,7 @@ router.get('/baker/profile', requireAuth, async (req, res) => {
 
     const { data: baker } = await supabase
       .from('bakers')
-      .select('id, name, slug, logo_url, primary_color, accent_color, instagram_handle, website_url, tagline, storefront_theme_id, portrait_url, storefront_published')
+      .select('id, name, slug, logo_url, primary_color, accent_color, instagram_handle, website_url, tagline, storefront_theme_id, portrait_url, storefront_published, storefront_customizations')
       .eq('id', contact.baker_id)
       .single();
     if (!baker) return res.status(404).json({ error: 'Baker not found' });
@@ -195,6 +195,7 @@ router.get('/baker/profile', requireAuth, async (req, res) => {
         storefront_theme_id: baker.storefront_theme_id,
         portrait_url:     toPublicUrl(baker.portrait_url),
         storefront_published: baker.storefront_published,
+        storefront_customizations: baker.storefront_customizations || {},
         subscription_status: sub.status,
         subscription_plan:   sub.plan?.name ?? null,
         subscription_end:    sub.end_date   ?? null,
@@ -229,6 +230,10 @@ router.patch('/baker/profile', requireAuth, requireCapability('store:manage'), a
       if (!theme)           return res.status(400).json({ error: 'Unknown storefront_theme_id' });
       if (!theme.is_active) return res.status(400).json({ error: 'That theme is not available yet' });
       updates.storefront_theme_id = id;
+    }
+    // storefront_customizations is jsonb (NOT NULL) — only set when a real object is sent.
+    if (req.body.storefront_customizations && typeof req.body.storefront_customizations === 'object') {
+      updates.storefront_customizations = req.body.storefront_customizations;
     }
     if (!Object.keys(updates).length) return res.status(400).json({ error: 'No fields to update' });
 

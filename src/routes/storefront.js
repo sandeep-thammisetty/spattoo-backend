@@ -38,7 +38,7 @@ router.get('/storefront/:slug', async (req, res) => {
   try {
     const { data: baker, error } = await supabase
       .from('bakers')
-      .select('id, name, slug, logo_url, primary_color, accent_color, tagline, story, portrait_url, instagram_handle, website_url, storefront_published, storefront_themes(key)')
+      .select('id, name, slug, logo_url, primary_color, accent_color, tagline, story, portrait_url, instagram_handle, website_url, storefront_published, storefront_customizations, storefront_themes(key)')
       .eq('slug', req.params.slug)
       .eq('is_active', true)
       .maybeSingle();
@@ -67,6 +67,7 @@ router.get('/storefront/:slug', async (req, res) => {
       instagram_handle: baker.instagram_handle,
       website_url:      baker.website_url,
       storefront_theme: baker.storefront_themes?.key || 'spotlight',
+      storefront_customizations: baker.storefront_customizations || {},
       gallery:          (photos ?? []).map(p => ({ url: toPublicUrl(p.storage_key), caption: p.caption })),
     });
   } catch (err) {

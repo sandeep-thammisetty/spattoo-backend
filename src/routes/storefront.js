@@ -38,13 +38,15 @@ router.get('/storefront/:slug', async (req, res) => {
   try {
     const { data: baker, error } = await supabase
       .from('bakers')
-      .select('id, name, slug, logo_url, primary_color, accent_color, tagline, story, portrait_url, instagram_handle, website_url, storefront_themes(key)')
+      .select('id, name, slug, logo_url, primary_color, accent_color, tagline, story, portrait_url, instagram_handle, website_url, storefront_published, storefront_themes(key)')
       .eq('slug', req.params.slug)
       .eq('is_active', true)
       .maybeSingle();
 
     if (error)  return res.status(500).json({ error: error.message });
     if (!baker) return res.status(404).json({ error: 'Storefront not found' });
+    // Draft storefronts are not publicly visible until the baker hits Publish.
+    if (!baker.storefront_published) return res.status(404).json({ error: 'No storefront available' });
 
     // Gallery photos (ordered) — non-critical; absent is fine (storefront shows the fallback).
     const { data: photos } = await supabase

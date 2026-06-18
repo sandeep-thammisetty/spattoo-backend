@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { randomBytes } from 'crypto';
 import { supabase } from '../services/supabase.js';
+import { deleteObject } from '../services/r2.js';
 import { requireAuth } from '../middleware/auth.js';
 import { requireCapability, resolveCustomer } from '../middleware/rbac.js';
 import { config } from '../config.js';
@@ -164,7 +165,7 @@ router.get('/baker/profile', requireAuth, async (req, res) => {
 
     const { data: baker } = await supabase
       .from('bakers')
-      .select('id, name, slug, logo_url, primary_color, accent_color, instagram_handle, website_url, tagline, storefront_theme_id, portrait_url')
+      .select('id, name, slug, logo_url, primary_color, accent_color, instagram_handle, website_url, tagline, storefront_theme_id, portrait_url, storefront_published')
       .eq('id', contact.baker_id)
       .single();
     if (!baker) return res.status(404).json({ error: 'Baker not found' });
@@ -193,6 +194,7 @@ router.get('/baker/profile', requireAuth, async (req, res) => {
         tagline:          baker.tagline,
         storefront_theme_id: baker.storefront_theme_id,
         portrait_url:     toPublicUrl(baker.portrait_url),
+        storefront_published: baker.storefront_published,
         subscription_status: sub.status,
         subscription_plan:   sub.plan?.name ?? null,
         subscription_end:    sub.end_date   ?? null,
@@ -279,9 +281,62 @@ router.get('/baker/storefront-photos', requireAuth, async (req, res) => {
   }
 });
 
+// ── POST /api/baker/storefront-photos ─────────────────────────────────────────
+// Add one gallery photo (already uploaded to R2). Body: { storage_key | key, caption? }.
+// A row is written immediately on upload so every R2 object is tracked + manageable.
+router.post('/baker/storefront-photos', requireAuth, requireCapability('store:manage'), async (req, res) => {
+  try {
+    const { data: contact } = await supabase
+      .from('baker_appusers').select('baker_id').eq('auth_user_id', req.user.id).maybeSingle();
+    if (!contact) return res.status(404).json({ error: 'No baker account found' });
+
+    const storage_key = req.body?.storage_key || req.body?.key;
+    if (!storage_key) return res.status(400).json({ error: 'storage_key is required' });
+
+    const { data: last } = await supabase
+      .from('baker_storefront_photos').select('sort_order')
+      .eq('baker_id', contact.baker_id).order('sort_order', { ascending: false }).limit(1).maybeSingle();
+    const sort_order = (last?.sort_order ?? -1) + 1;
+
+    const { data, error } = await supabase
+      .from('baker_storefront_photos')
+      .insert({ baker_id: contact.baker_id, storage_key, caption: req.body?.caption || null, sort_order })
+      .select('id, storage_key, caption, sort_order')
+      .single();
+    if (error) return res.status(500).json({ error: error.message });
+
+    res.json({ id: data.id, key: data.storage_key, url: toPublicUrl(data.storage_key), caption: data.caption, sort_order: data.sort_order });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── DELETE /api/baker/storefront-photos/:id ───────────────────────────────────
+// Remove a photo: deletes the row AND its R2 object (no orphans left behind).
+router.delete('/baker/storefront-photos/:id', requireAuth, requireCapability('store:manage'), async (req, res) => {
+  try {
+    const { data: contact } = await supabase
+      .from('baker_appusers').select('baker_id').eq('auth_user_id', req.user.id).maybeSingle();
+    if (!contact) return res.status(404).json({ error: 'No baker account found' });
+
+    const { data: row } = await supabase
+      .from('baker_storefront_photos').select('id, storage_key')
+      .eq('id', req.params.id).eq('baker_id', contact.baker_id).maybeSingle();
+    if (!row) return res.status(404).json({ error: 'Photo not found' });
+
+    const { error } = await supabase.from('baker_storefront_photos').delete().eq('id', row.id);
+    if (error) return res.status(500).json({ error: error.message });
+    try { await deleteObject(row.storage_key); } catch (e) { /* best-effort R2 cleanup */ }
+
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── PUT /api/baker/storefront-photos ──────────────────────────────────────────
-// Replace the baker's whole ordered gallery (photos already uploaded to R2 via sign-upload).
-// Body: { photos: [{ storage_key | key, caption? }] }. Array order = display order.
+// Save captions + order for EXISTING photos. Body: { photos: [{ id, caption?, sort_order? }] }.
+// Metadata-only — use POST/DELETE to add/remove.
 router.put('/baker/storefront-photos', requireAuth, requireCapability('store:manage'), async (req, res) => {
   try {
     const { data: contact } = await supabase
@@ -291,24 +346,37 @@ router.put('/baker/storefront-photos', requireAuth, requireCapability('store:man
     const photos = Array.isArray(req.body?.photos) ? req.body.photos : null;
     if (!photos) return res.status(400).json({ error: 'photos array is required' });
 
-    const rows = photos.map((p, i) => ({
-      baker_id: contact.baker_id, storage_key: p.storage_key || p.key, caption: p.caption || null, sort_order: i,
-    }));
-    if (rows.some(r => !r.storage_key)) return res.status(400).json({ error: 'each photo needs a storage_key' });
-
-    const { error: delErr } = await supabase
-      .from('baker_storefront_photos').delete().eq('baker_id', contact.baker_id);
-    if (delErr) return res.status(500).json({ error: delErr.message });
-
-    if (rows.length) {
-      const { error: insErr } = await supabase.from('baker_storefront_photos').insert(rows);
-      if (insErr) return res.status(500).json({ error: insErr.message });
+    for (let i = 0; i < photos.length; i++) {
+      const p = photos[i];
+      if (!p?.id) continue;
+      await supabase.from('baker_storefront_photos')
+        .update({ caption: p.caption ?? null, sort_order: p.sort_order ?? i })
+        .eq('id', p.id).eq('baker_id', contact.baker_id);
     }
-    res.json({ ok: true, count: rows.length });
+    res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
+
+// ── POST /api/baker/storefront/publish  +  /unpublish ─────────────────────────
+// Flip the storefront live/draft. Required before the public page renders or the
+// baker can invite customers.
+async function setPublished(req, res, published) {
+  try {
+    const { data: contact } = await supabase
+      .from('baker_appusers').select('baker_id').eq('auth_user_id', req.user.id).maybeSingle();
+    if (!contact) return res.status(404).json({ error: 'No baker account found' });
+    const { error } = await supabase.from('bakers')
+      .update({ storefront_published: published }).eq('id', contact.baker_id);
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true, storefront_published: published });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+router.post('/baker/storefront/publish',   requireAuth, requireCapability('store:manage'), (req, res) => setPublished(req, res, true));
+router.post('/baker/storefront/unpublish', requireAuth, requireCapability('store:manage'), (req, res) => setPublished(req, res, false));
 
 router.get('/baker/settings', requireAuth, async (req, res) => {
   try {

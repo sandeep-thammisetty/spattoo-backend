@@ -249,6 +249,13 @@ router.post('/baker/customers/invite', requireAuth, requireCapability('customer:
     const bakerId = req.bakerId;
     if (!bakerId) return res.status(400).json({ error: 'Baker context required' });
 
+    // A draft storefront can't take customers yet — publish it first.
+    const { data: pub } = await supabase
+      .from('bakers').select('storefront_published').eq('id', bakerId).maybeSingle();
+    if (!pub?.storefront_published) {
+      return res.status(409).json({ error: 'Publish your storefront before inviting customers.' });
+    }
+
     const { firstName, lastName, email, phone, channels, note, expiresInDays = 14 } = req.body;
     const emailNorm = email?.trim().toLowerCase() || null;
     const phoneNorm = phone?.trim() || null;

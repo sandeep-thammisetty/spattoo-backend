@@ -25,6 +25,11 @@ export const config = {
   },
   openai:   { apiKey: process.env.OPENAI_API_KEY },
   removeBg: { apiKey: process.env.REMOVE_BG_API_KEY },
+  // Meshy.ai image-to-3D. Not in `required[]` (like razorpay/smtp) so local boot
+  // doesn't fail without a key — services/meshy.js throws a clear error at call time.
+  // The completion webhook URL is configured once in the Meshy dashboard (account-global),
+  // pointing at `https://<api-host>/api/webhooks/meshy`.
+  meshy:    { apiKey: process.env.MESHY_API_KEY },
   redis:    { url:    process.env.REDIS_URL },
   r2: {
     endpoint:        process.env.R2_ENDPOINT,

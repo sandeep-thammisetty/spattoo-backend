@@ -14,6 +14,8 @@ const ALLOWED_FOLDERS = [
   'templates/thumbnails',
   'logos',
   'orders/thumbnails',
+  'meshy/source',   // uploaded 2D image for the image→3D wizard (public so Meshy can fetch it)
+  'meshy/outputs',  // our copy of the Meshy-generated GLB (written server-side via putObject)
 ];
 
 router.post('/storage/sign-upload', requireAuth, requireCapability('design:create'), async (req, res) => {

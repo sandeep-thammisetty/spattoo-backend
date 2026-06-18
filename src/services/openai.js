@@ -147,6 +147,67 @@ Return ONLY valid JSON, no explanation:
   return JSON.parse(json);
 }
 
+// Cheap pre-flight gate for the image→3D wizard: decide whether an uploaded image is
+// a good candidate for Meshy image-to-3D BEFORE spending ~30 credits on a generation.
+// PASS only a single cake or single cake component on a plain-ish background; REJECT
+// humans, scenes, and multi-object photos (they produce a fused, un-segmentable mesh).
+//   returns: { ok: boolean, category: string, reason: string }
+export async function validateCakeImage(imageUrl) {
+  const prompt = `You are a quality gate for a 2D-image → 3D-model pipeline. The 3D model will later be
+split into recolourable parts, so the input image must depict ONE clean subject on a plain background.
+
+Decide if THIS image qualifies. Return ONLY a JSON object, no explanation:
+{
+  "ok": <true|false>,
+  "category": "<cake|cake_component|topper|multiple_objects|person|scene|other>",
+  "reason": "<one short sentence the user will read>"
+}
+
+PASS (ok:true) ONLY when the image is a single cake, a single cake component, or a single
+cake topper/decoration, shown roughly isolated on a plain or simple background.
+
+REJECT (ok:false) when ANY of these is true:
+- a person, human/animal face, hands, or body is present  → category "person"
+- a busy scene, room, table spread, or several distinct objects → category "scene" or "multiple_objects"
+- the subject is not a cake / cake component / edible decoration → category "other"
+Keep "reason" friendly and specific (e.g. "This photo has a person in it — upload just the cake").`;
+
+  const payload = JSON.stringify({
+    model: 'gpt-4o',
+    max_tokens: 200,
+    messages: [{
+      role: 'user',
+      content: [
+        { type: 'image_url', image_url: { url: imageUrl, detail: 'low' } },
+        { type: 'text', text: prompt },
+      ],
+    }],
+  });
+
+  // Same 429 backoff as suggestCraftGuide — honour the "try again in Xs" hint.
+  let res;
+  for (let attempt = 0; ; attempt++) {
+    res = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${config.openai.apiKey}`, 'Content-Type': 'application/json' },
+      body: payload,
+    });
+    if (res.ok) break;
+    const text = await res.text();
+    if (res.status === 429 && attempt < 6) {
+      const m = text.match(/try again in ([\d.]+)s/);
+      const waitMs = m ? Math.ceil(parseFloat(m[1]) * 1000) + 750 : 6000 * (attempt + 1);
+      await sleep(waitMs);
+      continue;
+    }
+    throw new Error(`GPT-4o validate-image failed: ${text}`);
+  }
+  const data = await res.json();
+  const raw  = data.choices[0].message.content.trim();
+  const json = raw.replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/i, '').trim();
+  return JSON.parse(json);
+}
+
 export async function generateElementImage(prompt) {
   const res = await fetch('https://api.openai.com/v1/images/generations', {
     method: 'POST',

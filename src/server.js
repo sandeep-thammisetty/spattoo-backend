@@ -16,13 +16,17 @@ import craftGuideRouter from './routes/craftGuide.js';
 import nozzlesRouter from './routes/nozzles.js';
 import rbacRouter from './routes/rbac.js';
 import storefrontRouter from './routes/storefront.js';
+import meshyRouter from './routes/meshy.js';
+import webhooksRouter from './routes/webhooks.js';
 
 const app = express();
 
 app.use(cors());
 
-// Webhook needs raw body for Razorpay signature verification — mount before express.json()
+// Webhooks need the raw body (signature verification / unsigned-but-verified-by-refetch) —
+// mount before express.json() so the body isn't consumed as JSON first.
 app.post('/api/billing/webhook', express.raw({ type: 'application/json' }));
+app.post('/api/webhooks/meshy',  express.raw({ type: 'application/json' }));
 
 app.use(express.json({ limit: '5mb' }));
 
@@ -42,5 +46,7 @@ app.use('/api', craftGuideRouter);
 app.use('/api', nozzlesRouter);
 app.use('/api', rbacRouter);
 app.use('/api', storefrontRouter);
+app.use('/api', meshyRouter);
+app.use('/api', webhooksRouter);
 
 export default app;

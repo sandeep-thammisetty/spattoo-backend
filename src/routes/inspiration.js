@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { validateCakeImage, analyzeCake } from '../services/openai.js';
+import { matchAnalysis } from '../services/inspirationMatch.js';
 import { requireAuth } from '../middleware/auth.js';
 import { requireCapability } from '../middleware/rbac.js';
 
@@ -22,6 +23,22 @@ router.post('/admin/inspiration/analyze', requireAuth, requireCapability('catalo
 
     const analysis = await analyzeCake(dataUri);
     res.json({ ok: true, analysis });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /admin/inspiration/match — match an analysis spec's decorations to library elements.
+// Body: { analysis } (the object from /analyze). Returns per-tier matches (best element +
+// alternatives + confidence + matchedZone) + a coverage summary + cake-level decorations skipped.
+router.post('/admin/inspiration/match', requireAuth, requireCapability('catalog:admin'), async (req, res) => {
+  try {
+    const { analysis } = req.body ?? {};
+    if (!analysis || !Array.isArray(analysis.tiers)) {
+      return res.status(400).json({ error: 'analysis (with a tiers array) is required' });
+    }
+    const result = await matchAnalysis(analysis);
+    res.json({ ok: true, ...result });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

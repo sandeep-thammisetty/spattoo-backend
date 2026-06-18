@@ -237,7 +237,8 @@ Describe ONLY what you can actually see. Return ONLY a JSON object, no prose:
         {
           "type": "<piping_border|rosette|flower|drip|topper|lettering|ribbon_bow|sprinkles|pearls|fruit|macaron|figurine|other>",
           "subtype": "<short, e.g. 'shell','rope','ruffle', or null>",
-          "placement": "<top_surface|top_edge|side|side_top|side_bottom|base|board>",
+          "placement": "<top_surface|side|middle_tier|board|rim>",
+          "rim_side": "<top|bottom — ONLY when placement is 'rim' (a border/edge); else null>",
           "color_hex": "<hex>",
           "material": "<buttercream|fondant|acrylic|sugar|chocolate|fresh|other, or null>",
           "technique": "<short, e.g. 'star tip (1M)', or null>",
@@ -254,8 +255,9 @@ Describe ONLY what you can actually see. Return ONLY a JSON object, no prose:
 }
 Rules:
 - Use ONLY the vocabularies above for type/placement/frosting/finish; if unsure, pick the closest.
+- "placement" uses the cake's real zones: "top_surface" (flat top), "rim" (the edge where top meets side — a piped border lives here; set rim_side top or bottom), "side" (the vertical wall of a tier), "middle_tier" (the wall of a lower tier on a stacked cake), "board" (the base board the cake sits on).
 - One tier object per visible tier, bottom first (index 0). A single-tier cake = tier_count 1, one tier, position "single".
-- Group each decoration under the tier it sits on. A border at the top of the bottom tier belongs to that tier with placement "top_edge".
+- Group each decoration under the tier it sits on. A shell border around the top edge of the bottom tier belongs to that tier with placement "rim", rim_side "top"; a border where the cake meets the board is placement "rim", rim_side "bottom".
 - ALWAYS give colours as hex AND a human name. "palette" = the 3-6 distinct colours used overall.
 - Ignore the plate/stand/background; "board" is the cake board only.`;
 
@@ -293,6 +295,74 @@ Rules:
   const raw  = data.choices[0].message.content.trim();
   const json = raw.replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/i, '').trim();
   return JSON.parse(json);
+}
+
+// Embed text for inspiration-matching retrieval. text-embedding-3-small → 1536-dim vector,
+// stored in cake_elements.description_embedding (pgvector) and used for KNN over the library.
+export async function embedText(input) {
+  let res;
+  for (let attempt = 0; ; attempt++) {
+    res = await fetch('https://api.openai.com/v1/embeddings', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${config.openai.apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'text-embedding-3-small', input }),
+    });
+    if (res.ok) break;
+    const text = await res.text();
+    if (res.status === 429 && attempt < 6) {
+      const m = text.match(/try again in ([\d.]+)s/);
+      const waitMs = m ? Math.ceil(parseFloat(m[1]) * 1000) + 750 : 6000 * (attempt + 1);
+      await sleep(waitMs);
+      continue;
+    }
+    throw new Error(`Embedding failed: ${text}`);
+  }
+  const data = await res.json();
+  return data.data[0].embedding; // Float[1536]
+}
+
+// Server-side variant of /elements/suggest (description only): generate the comma-separated
+// search-keyword `description` for an element from its image. Used by the element index
+// backfill + the ingest safety-net. imageUrl = a public URL or a data URI.
+export async function suggestDescription(imageUrl, elementType) {
+  const prompt = `You are tagging a cake decoration element for search. Look at the image and return
+8 to 12 comma-separated search KEYWORDS (no sentences) covering shape, technique, style, nozzle/tip
+type, occasions and alternative names a baker might search. Element type: ${elementType || 'cake decoration'}.
+Return ONLY JSON: { "description": "<comma-separated keywords>" }`;
+
+  const payload = JSON.stringify({
+    model: 'gpt-4o',
+    max_tokens: 160,
+    messages: [{
+      role: 'user',
+      content: [
+        { type: 'image_url', image_url: { url: imageUrl, detail: 'low' } },
+        { type: 'text', text: prompt },
+      ],
+    }],
+  });
+
+  let res;
+  for (let attempt = 0; ; attempt++) {
+    res = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${config.openai.apiKey}`, 'Content-Type': 'application/json' },
+      body: payload,
+    });
+    if (res.ok) break;
+    const text = await res.text();
+    if (res.status === 429 && attempt < 6) {
+      const m = text.match(/try again in ([\d.]+)s/);
+      const waitMs = m ? Math.ceil(parseFloat(m[1]) * 1000) + 750 : 6000 * (attempt + 1);
+      await sleep(waitMs);
+      continue;
+    }
+    throw new Error(`GPT-4o suggest-description failed: ${text}`);
+  }
+  const data = await res.json();
+  const raw  = data.choices[0].message.content.trim();
+  const json = raw.replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/i, '').trim();
+  return (JSON.parse(json).description || '').trim();
 }
 
 export async function generateElementImage(prompt) {

@@ -6,6 +6,7 @@ import { requireCapability } from '../middleware/rbac.js';
 import { config } from '../config.js';
 import { removeBackground } from '../services/removebg.js';
 import { jobQueue } from '../jobs/queue.js';
+import { reindexElement } from '../services/elementIndex.js';
 
 const router = Router();
 
@@ -192,6 +193,9 @@ router.patch('/admin/elements/:id', requireAuth, requireCapability('catalog:admi
 
     if (error) return res.status(500).json({ error: error.message });
     res.json(data);
+    // Re-index when something that affects the search text/embedding changed. Fire-and-forget.
+    if (['name', 'description', 'thumbnail_url', 'image_url'].some(k => k in updates))
+      reindexElement(id).catch(e => console.error('reindex(update) failed:', e.message));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -228,6 +232,8 @@ router.post('/admin/elements', requireAuth, requireCapability('catalog:admin'), 
     if (error) return res.status(500).json({ error: error.message });
 
     res.status(201).json({ id: data.id });
+    // Index for inspiration matching (fills an empty description + embeds). Fire-and-forget.
+    reindexElement(data.id).catch(e => console.error('reindex(create) failed:', e.message));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

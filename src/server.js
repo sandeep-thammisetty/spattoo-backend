@@ -18,6 +18,7 @@ import rbacRouter from './routes/rbac.js';
 import storefrontRouter from './routes/storefront.js';
 import meshyRouter from './routes/meshy.js';
 import webhooksRouter from './routes/webhooks.js';
+import inspirationRouter from './routes/inspiration.js';
 
 const app = express();
 
@@ -48,5 +49,6 @@ app.use('/api', rbacRouter);
 app.use('/api', storefrontRouter);
 app.use('/api', meshyRouter);
 app.use('/api', webhooksRouter);
+app.use('/api', inspirationRouter);
 
 export default app;

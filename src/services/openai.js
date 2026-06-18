@@ -208,6 +208,93 @@ Keep "reason" friendly and specific (e.g. "This photo has a person in it — upl
   return JSON.parse(json);
 }
 
+// Read a cake photo and produce a TIER-WISE reconstruction spec for the "Build from Inspiration"
+// flow — everything needed to rebuild the cake from library elements. Controlled vocabularies on
+// type/placement/frosting keep it machine-mappable for later (matching/composition); colours are
+// always hex + a human name. Phase 1 just displays this; nothing is matched yet.
+export async function analyzeCake(imageUrl) {
+  const prompt = `You are a master cake decorator analysing a cake photo so it can be rebuilt from a parts library.
+Describe ONLY what you can actually see. Return ONLY a JSON object, no prose:
+{
+  "cake": {
+    "tier_count": <integer 1-5>,
+    "shape": "<round|square|heart|number|sculpted|other>",
+    "style": "<short phrase, e.g. 'buttercream lambeth', 'fondant modern'>",
+    "board": { "present": <true|false>, "color_hex": "<hex or null>" }
+  },
+  "tiers": [
+    {
+      "index": <0-based; 0 = bottom>,
+      "position": "<bottom|middle|top|single>",
+      "height_ratio": <0..1 relative height, optional>,
+      "frosting": {
+        "type": "<buttercream|fondant|ganache|naked|whipped>",
+        "finish": "<matte|satin|glossy|textured>",
+        "base_color_hex": "<hex>",
+        "color_name": "<human colour name>"
+      },
+      "decorations": [
+        {
+          "type": "<piping_border|rosette|flower|drip|topper|lettering|ribbon_bow|sprinkles|pearls|fruit|macaron|figurine|other>",
+          "subtype": "<short, e.g. 'shell','rope','ruffle', or null>",
+          "placement": "<top_surface|top_edge|side|side_top|side_bottom|base|board>",
+          "color_hex": "<hex>",
+          "material": "<buttercream|fondant|acrylic|sugar|chocolate|fresh|other, or null>",
+          "technique": "<short, e.g. 'star tip (1M)', or null>",
+          "text": "<for lettering, the exact text, else null>",
+          "count": "<a number, or 'continuous', or 'few'>",
+          "notes": "<short, optional>"
+        }
+      ]
+    }
+  ],
+  "palette": [ { "hex": "<hex>", "name": "<colour name>" } ],
+  "confidence": <0.0-1.0>,
+  "observations": "<one or two sentences summarising the cake>"
+}
+Rules:
+- Use ONLY the vocabularies above for type/placement/frosting/finish; if unsure, pick the closest.
+- One tier object per visible tier, bottom first (index 0). A single-tier cake = tier_count 1, one tier, position "single".
+- Group each decoration under the tier it sits on. A border at the top of the bottom tier belongs to that tier with placement "top_edge".
+- ALWAYS give colours as hex AND a human name. "palette" = the 3-6 distinct colours used overall.
+- Ignore the plate/stand/background; "board" is the cake board only.`;
+
+  const payload = JSON.stringify({
+    model: 'gpt-4o',
+    max_tokens: 1500,
+    messages: [{
+      role: 'user',
+      content: [
+        { type: 'image_url', image_url: { url: imageUrl, detail: 'high' } },
+        { type: 'text', text: prompt },
+      ],
+    }],
+  });
+
+  // Same 429 backoff as the other vision calls.
+  let res;
+  for (let attempt = 0; ; attempt++) {
+    res = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${config.openai.apiKey}`, 'Content-Type': 'application/json' },
+      body: payload,
+    });
+    if (res.ok) break;
+    const text = await res.text();
+    if (res.status === 429 && attempt < 6) {
+      const m = text.match(/try again in ([\d.]+)s/);
+      const waitMs = m ? Math.ceil(parseFloat(m[1]) * 1000) + 750 : 6000 * (attempt + 1);
+      await sleep(waitMs);
+      continue;
+    }
+    throw new Error(`GPT-4o analyze-cake failed: ${text}`);
+  }
+  const data = await res.json();
+  const raw  = data.choices[0].message.content.trim();
+  const json = raw.replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/i, '').trim();
+  return JSON.parse(json);
+}
+
 export async function generateElementImage(prompt) {
   const res = await fetch('https://api.openai.com/v1/images/generations', {
     method: 'POST',

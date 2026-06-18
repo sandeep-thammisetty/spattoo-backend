@@ -383,6 +383,56 @@ async function setPublished(req, res, published) {
 router.post('/baker/storefront/publish',   requireAuth, requireCapability('store:manage'), (req, res) => setPublished(req, res, true));
 router.post('/baker/storefront/unpublish', requireAuth, requireCapability('store:manage'), (req, res) => setPublished(req, res, false));
 
+// ── GET /api/baker/testimonials ───────────────────────────────────────────────
+// The baker's customer reviews (ordered) for the storefront + customiser.
+router.get('/baker/testimonials', requireAuth, async (req, res) => {
+  try {
+    const { data: contact } = await supabase
+      .from('baker_appusers').select('baker_id').eq('auth_user_id', req.user.id).maybeSingle();
+    if (!contact) return res.status(404).json({ error: 'No baker account found' });
+
+    const { data, error } = await supabase
+      .from('baker_testimonials')
+      .select('id, quote, author, occasion, sort_order')
+      .eq('baker_id', contact.baker_id)
+      .order('sort_order');
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ testimonials: data ?? [] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── PUT /api/baker/testimonials ───────────────────────────────────────────────
+// Replace the baker's whole ordered review set. Body: { testimonials: [{ quote, author?, occasion? }] }.
+// Rows without a quote are dropped. (Pure text — no external resource, so replace is fine.)
+router.put('/baker/testimonials', requireAuth, requireCapability('store:manage'), async (req, res) => {
+  try {
+    const { data: contact } = await supabase
+      .from('baker_appusers').select('baker_id').eq('auth_user_id', req.user.id).maybeSingle();
+    if (!contact) return res.status(404).json({ error: 'No baker account found' });
+
+    const list = Array.isArray(req.body?.testimonials) ? req.body.testimonials : null;
+    if (!list) return res.status(400).json({ error: 'testimonials array is required' });
+
+    const rows = list
+      .filter(t => t?.quote && t.quote.trim())
+      .map((t, i) => ({ baker_id: contact.baker_id, quote: t.quote.trim(), author: t.author?.trim() || null, occasion: t.occasion?.trim() || null, sort_order: i }));
+
+    const { error: delErr } = await supabase
+      .from('baker_testimonials').delete().eq('baker_id', contact.baker_id);
+    if (delErr) return res.status(500).json({ error: delErr.message });
+
+    if (rows.length) {
+      const { error: insErr } = await supabase.from('baker_testimonials').insert(rows);
+      if (insErr) return res.status(500).json({ error: insErr.message });
+    }
+    res.json({ ok: true, count: rows.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get('/baker/settings', requireAuth, async (req, res) => {
   try {
     const { data: contact } = await supabase

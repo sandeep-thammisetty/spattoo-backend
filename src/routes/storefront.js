@@ -48,12 +48,11 @@ router.get('/storefront/:slug', async (req, res) => {
     // Draft storefronts are not publicly visible until the baker hits Publish.
     if (!baker.storefront_published) return res.status(404).json({ error: 'No storefront available' });
 
-    // Gallery photos (ordered) — non-critical; absent is fine (storefront shows the fallback).
-    const { data: photos } = await supabase
-      .from('baker_storefront_photos')
-      .select('storage_key, caption')
-      .eq('baker_id', baker.id)
-      .order('sort_order');
+    // Gallery photos + testimonials (ordered) — non-critical; absent is fine.
+    const [{ data: photos }, { data: tms }] = await Promise.all([
+      supabase.from('baker_storefront_photos').select('storage_key, caption').eq('baker_id', baker.id).order('sort_order'),
+      supabase.from('baker_testimonials').select('quote, author, occasion').eq('baker_id', baker.id).order('sort_order'),
+    ]);
 
     res.json({
       name:             baker.name,
@@ -69,6 +68,7 @@ router.get('/storefront/:slug', async (req, res) => {
       storefront_theme: baker.storefront_themes?.key || 'spotlight',
       storefront_customizations: baker.storefront_customizations || {},
       gallery:          (photos ?? []).map(p => ({ url: toPublicUrl(p.storage_key), caption: p.caption })),
+      testimonials:     (tms ?? []).map(t => ({ quote: t.quote, author: t.author, occasion: t.occasion })),
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

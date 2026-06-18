@@ -13,6 +13,8 @@ const ALLOWED_FOLDERS = [
   'templates/files',
   'templates/thumbnails',
   'logos',
+  'portraits',             // baker portrait for the storefront "Our story" section
+  'storefront/gallery',    // baker cake photos for the storefront slideshow
   'orders/thumbnails',
   'meshy/source',   // uploaded 2D image for the image→3D wizard (public so Meshy can fetch it)
   'meshy/outputs',  // our copy of the Meshy-generated GLB (written server-side via putObject)

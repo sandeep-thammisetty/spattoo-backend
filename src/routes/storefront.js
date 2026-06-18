@@ -38,13 +38,20 @@ router.get('/storefront/:slug', async (req, res) => {
   try {
     const { data: baker, error } = await supabase
       .from('bakers')
-      .select('name, slug, logo_url, primary_color, accent_color, tagline, story, instagram_handle, website_url')
+      .select('id, name, slug, logo_url, primary_color, accent_color, tagline, story, portrait_url, instagram_handle, website_url, storefront_themes(key)')
       .eq('slug', req.params.slug)
       .eq('is_active', true)
       .maybeSingle();
 
     if (error)  return res.status(500).json({ error: error.message });
     if (!baker) return res.status(404).json({ error: 'Storefront not found' });
+
+    // Gallery photos (ordered) — non-critical; absent is fine (storefront shows the fallback).
+    const { data: photos } = await supabase
+      .from('baker_storefront_photos')
+      .select('storage_key, caption')
+      .eq('baker_id', baker.id)
+      .order('sort_order');
 
     res.json({
       name:             baker.name,
@@ -54,8 +61,11 @@ router.get('/storefront/:slug', async (req, res) => {
       accent_color:     baker.accent_color,
       tagline:          baker.tagline,
       story:            baker.story,
+      portrait_url:     toPublicUrl(baker.portrait_url),
       instagram_handle: baker.instagram_handle,
       website_url:      baker.website_url,
+      storefront_theme: baker.storefront_themes?.key || 'spotlight',
+      gallery:          (photos ?? []).map(p => ({ url: toPublicUrl(p.storage_key), caption: p.caption })),
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

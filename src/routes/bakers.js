@@ -164,7 +164,7 @@ router.get('/baker/profile', requireAuth, async (req, res) => {
 
     const { data: baker } = await supabase
       .from('bakers')
-      .select('id, name, slug, logo_url, primary_color, accent_color, instagram_handle, website_url, tagline')
+      .select('id, name, slug, logo_url, primary_color, accent_color, instagram_handle, website_url, tagline, storefront_theme_id, portrait_url')
       .eq('id', contact.baker_id)
       .single();
     if (!baker) return res.status(404).json({ error: 'Baker not found' });
@@ -191,6 +191,8 @@ router.get('/baker/profile', requireAuth, async (req, res) => {
         primary_color:    baker.primary_color,  accent_color: baker.accent_color,
         instagram_handle: baker.instagram_handle, website_url: baker.website_url,
         tagline:          baker.tagline,
+        storefront_theme_id: baker.storefront_theme_id,
+        portrait_url:     toPublicUrl(baker.portrait_url),
         subscription_status: sub.status,
         subscription_plan:   sub.plan?.name ?? null,
         subscription_end:    sub.end_date   ?? null,
@@ -211,10 +213,20 @@ router.patch('/baker/profile', requireAuth, requireCapability('store:manage'), a
       .maybeSingle();
     if (!contact) return res.status(404).json({ error: 'No baker account found' });
 
-    const ALLOWED = ['primary_color', 'accent_color', 'logo_url', 'instagram_handle', 'website_url', 'tagline'];
+    const ALLOWED = ['primary_color', 'accent_color', 'logo_url', 'instagram_handle', 'website_url', 'tagline', 'story', 'portrait_url'];
     const updates = {};
     for (const f of ALLOWED) {
       if (f in req.body) updates[f] = req.body[f] || null;
+    }
+    // storefront_theme_id is a FK to the themes master table — validate it exists and
+    // is available (is_active); never coerce the NOT-NULL column to null.
+    if ('storefront_theme_id' in req.body) {
+      const id = Number(req.body.storefront_theme_id);
+      const { data: theme } = await supabase
+        .from('storefront_themes').select('id, is_active').eq('id', id).maybeSingle();
+      if (!theme)           return res.status(400).json({ error: 'Unknown storefront_theme_id' });
+      if (!theme.is_active) return res.status(400).json({ error: 'That theme is not available yet' });
+      updates.storefront_theme_id = id;
     }
     if (!Object.keys(updates).length) return res.status(400).json({ error: 'No fields to update' });
 
@@ -225,6 +237,74 @@ router.patch('/baker/profile', requireAuth, requireCapability('store:manage'), a
     if (error) return res.status(500).json({ error: error.message });
 
     res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── GET /api/baker/storefront-themes ──────────────────────────────────────────
+// The themes master list for the Settings → Store Settings → Themes picker.
+// Returns [{ id, key, name, description, is_active }] (is_active=false = coming soon).
+router.get('/baker/storefront-themes', requireAuth, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('storefront_themes')
+      .select('id, key, name, description, is_active')
+      .order('sort_order');
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ themes: data ?? [] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── GET /api/baker/storefront-photos ──────────────────────────────────────────
+// The baker's gallery photos (ordered) for the storefront slideshow / customiser.
+router.get('/baker/storefront-photos', requireAuth, async (req, res) => {
+  try {
+    const { data: contact } = await supabase
+      .from('baker_appusers').select('baker_id').eq('auth_user_id', req.user.id).maybeSingle();
+    if (!contact) return res.status(404).json({ error: 'No baker account found' });
+
+    const { data, error } = await supabase
+      .from('baker_storefront_photos')
+      .select('id, storage_key, caption, sort_order')
+      .eq('baker_id', contact.baker_id)
+      .order('sort_order');
+    if (error) return res.status(500).json({ error: error.message });
+
+    res.json({ photos: (data ?? []).map(p => ({ id: p.id, key: p.storage_key, url: toPublicUrl(p.storage_key), caption: p.caption })) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── PUT /api/baker/storefront-photos ──────────────────────────────────────────
+// Replace the baker's whole ordered gallery (photos already uploaded to R2 via sign-upload).
+// Body: { photos: [{ storage_key | key, caption? }] }. Array order = display order.
+router.put('/baker/storefront-photos', requireAuth, requireCapability('store:manage'), async (req, res) => {
+  try {
+    const { data: contact } = await supabase
+      .from('baker_appusers').select('baker_id').eq('auth_user_id', req.user.id).maybeSingle();
+    if (!contact) return res.status(404).json({ error: 'No baker account found' });
+
+    const photos = Array.isArray(req.body?.photos) ? req.body.photos : null;
+    if (!photos) return res.status(400).json({ error: 'photos array is required' });
+
+    const rows = photos.map((p, i) => ({
+      baker_id: contact.baker_id, storage_key: p.storage_key || p.key, caption: p.caption || null, sort_order: i,
+    }));
+    if (rows.some(r => !r.storage_key)) return res.status(400).json({ error: 'each photo needs a storage_key' });
+
+    const { error: delErr } = await supabase
+      .from('baker_storefront_photos').delete().eq('baker_id', contact.baker_id);
+    if (delErr) return res.status(500).json({ error: delErr.message });
+
+    if (rows.length) {
+      const { error: insErr } = await supabase.from('baker_storefront_photos').insert(rows);
+      if (insErr) return res.status(500).json({ error: insErr.message });
+    }
+    res.json({ ok: true, count: rows.length });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

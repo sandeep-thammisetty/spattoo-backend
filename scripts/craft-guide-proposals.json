@@ -1,0 +1,634 @@
+[
+  {
+    "element_id": "e899efba-674b-4e24-8c08-5aa99880b82a",
+    "name": "Round Dollop",
+    "nozzle_recs": [
+      {
+        "nozzle_id": "5c0a9702-10dc-41c2-9319-ea0708330ff9",
+        "brand": "Wilton",
+        "number": "1A",
+        "name": "Large Round",
+        "rank": "primary",
+        "confidence": 1
+      },
+      {
+        "nozzle_id": "6a57cf42-da33-424d-87bf-1ded6794a742",
+        "brand": "Wilton",
+        "number": "2A",
+        "name": "Large Round",
+        "rank": "primary",
+        "confidence": 1
+      },
+      {
+        "nozzle_id": "b83ab496-ea45-4763-b8a5-0c9fcbba0b17",
+        "brand": "Wilton",
+        "number": "12",
+        "name": "Round",
+        "rank": "primary",
+        "confidence": 1
+      }
+    ],
+    "consistency": "stiff",
+    "technique": "Pipe with vertical pressure for a smooth dome."
+  },
+  {
+    "element_id": "2a6251fd-0f90-441b-a316-7480c703ea5f",
+    "name": "Soft Swirl",
+    "nozzle_recs": [
+      {
+        "nozzle_id": "5c0a9702-10dc-41c2-9319-ea0708330ff9",
+        "brand": "Wilton",
+        "number": "1A",
+        "name": "Large Round",
+        "rank": "primary",
+        "confidence": 0.95
+      },
+      {
+        "nozzle_id": "6a57cf42-da33-424d-87bf-1ded6794a742",
+        "brand": "Wilton",
+        "number": "2A",
+        "name": "Large Round",
+        "rank": "primary",
+        "confidence": 0.95
+      },
+      {
+        "nozzle_id": "78bf1ef6-3d8b-4878-9081-850815e61c4e",
+        "brand": "Ateco",
+        "number": "804",
+        "name": "Plain",
+        "rank": "primary",
+        "confidence": 0.95
+      }
+    ],
+    "consistency": "medium",
+    "technique": "Maintain steady pressure while swirling upwards."
+  },
+  {
+    "element_id": "f8426fd5-d371-4987-9cbe-628d9145e1d4",
+    "name": "Ruffled Swirl",
+    "nozzle_recs": [
+      {
+        "nozzle_id": "dff32979-16a5-45ce-888e-97ceb42937f3",
+        "brand": "Wilton",
+        "number": "86",
+        "name": "Ruffle",
+        "rank": "primary",
+        "confidence": 1
+      },
+      {
+        "nozzle_id": "f5f7faa9-85e9-449b-87eb-7bcda72df4a4",
+        "brand": "Wilton",
+        "number": "100",
+        "name": "Ruffle",
+        "rank": "primary",
+        "confidence": 1
+      },
+      {
+        "nozzle_id": "b83ab496-ea45-4763-b8a5-0c9fcbba0b17",
+        "brand": "Wilton",
+        "number": "12",
+        "name": "Round",
+        "rank": "secondary",
+        "confidence": 0.7
+      }
+    ],
+    "consistency": "medium",
+    "technique": "Keep the nozzle angled slightly and apply steady pressure while swirling."
+  },
+  {
+    "element_id": "e63e493c-6414-4604-a264-088d24e8b787",
+    "name": "Double Wave Swirl",
+    "nozzle_recs": [
+      {
+        "nozzle_id": "a7addbc3-b6e6-442e-be02-3b87d782acc5",
+        "brand": "Wilton",
+        "number": "1M",
+        "name": "Open Star",
+        "rank": "primary",
+        "confidence": 0.9
+      },
+      {
+        "nozzle_id": "e78da875-11a9-437e-b8a9-2810c2474d7d",
+        "brand": "Wilton",
+        "number": "4B",
+        "name": "Open Star",
+        "rank": "primary",
+        "confidence": 0.9
+      },
+      {
+        "nozzle_id": "11f0d86c-8397-48d0-bac7-bc4724947b83",
+        "brand": "Ateco",
+        "number": "826",
+        "name": "Open Star",
+        "rank": "primary",
+        "confidence": 0.9
+      }
+    ],
+    "consistency": "medium",
+    "technique": "Pipe with the tip at a 45-degree angle using steady pressure."
+  },
+  {
+    "element_id": "739b9151-3428-43aa-900f-326e1b5a7c40",
+    "name": "Shell Fan",
+    "nozzle_recs": [
+      {
+        "nozzle_id": "a7addbc3-b6e6-442e-be02-3b87d782acc5",
+        "brand": "Wilton",
+        "number": "1M",
+        "name": "Open Star",
+        "rank": "primary",
+        "confidence": 0.9
+      },
+      {
+        "nozzle_id": "90110bef-5ac6-4549-bff8-bf63020fb81b",
+        "brand": "Wilton",
+        "number": "18",
+        "name": "Open Star",
+        "rank": "primary",
+        "confidence": 0.9
+      },
+      {
+        "nozzle_id": "03e9f66d-975b-4abe-ab55-25bc7c5e00ad",
+        "brand": "Wilton",
+        "number": "21",
+        "name": "Open Star",
+        "rank": "primary",
+        "confidence": 0.9
+      }
+    ],
+    "consistency": "stiff",
+    "technique": "Hold at 45°, fan outward with steady pressure for the fluted shells."
+  },
+  {
+    "element_id": "dd9500b2-f0b3-45fe-8e15-9dc8226dc797",
+    "name": "Tall Swirl Rosette",
+    "nozzle_recs": [
+      {
+        "nozzle_id": "5a31f64b-b054-4b4e-aa2a-ed4fd094892d",
+        "brand": "Wilton",
+        "number": "32",
+        "name": "Open Star",
+        "rank": "primary",
+        "confidence": 1
+      },
+      {
+        "nozzle_id": "a7addbc3-b6e6-442e-be02-3b87d782acc5",
+        "brand": "Wilton",
+        "number": "1M",
+        "name": "Open Star",
+        "rank": "primary",
+        "confidence": 1
+      },
+      {
+        "nozzle_id": "e78da875-11a9-437e-b8a9-2810c2474d7d",
+        "brand": "Wilton",
+        "number": "4B",
+        "name": "Open Star",
+        "rank": "primary",
+        "confidence": 1
+      }
+    ],
+    "consistency": "medium",
+    "technique": "Hold the bag vertically and apply steady pressure while swirling upwards."
+  },
+  {
+    "element_id": "bb1606fd-4f6f-4315-af36-a865f71cdb8b",
+    "name": "Shell Swirl",
+    "nozzle_recs": [
+      {
+        "nozzle_id": "a7addbc3-b6e6-442e-be02-3b87d782acc5",
+        "brand": "Wilton",
+        "number": "1M",
+        "name": "Open Star",
+        "rank": "primary",
+        "confidence": 0.9
+      },
+      {
+        "nozzle_id": "e78da875-11a9-437e-b8a9-2810c2474d7d",
+        "brand": "Wilton",
+        "number": "4B",
+        "name": "Open Star",
+        "rank": "primary",
+        "confidence": 0.9
+      },
+      {
+        "nozzle_id": "eac42b4e-e399-4ab7-98b5-fb12efb4963a",
+        "brand": "Wilton",
+        "number": "8B",
+        "name": "Open Star",
+        "rank": "primary",
+        "confidence": 0.9
+      }
+    ],
+    "consistency": "stiff",
+    "technique": "Pipe a tight upward spiral with even pressure for the ridged swirl."
+  },
+  {
+    "element_id": "a2790c4a-6f39-458b-bccd-0fbaf3e9e8b8",
+    "name": "Star Dome",
+    "nozzle_recs": [
+      {
+        "nozzle_id": "5a31f64b-b054-4b4e-aa2a-ed4fd094892d",
+        "brand": "Wilton",
+        "number": "32",
+        "name": "Open Star",
+        "rank": "primary",
+        "confidence": 1
+      },
+      {
+        "nozzle_id": "a7addbc3-b6e6-442e-be02-3b87d782acc5",
+        "brand": "Wilton",
+        "number": "1M",
+        "name": "Open Star",
+        "rank": "primary",
+        "confidence": 1
+      },
+      {
+        "nozzle_id": "11f0d86c-8397-48d0-bac7-bc4724947b83",
+        "brand": "Ateco",
+        "number": "826",
+        "name": "Open Star",
+        "rank": "primary",
+        "confidence": 1
+      }
+    ],
+    "consistency": "stiff",
+    "technique": "Hold the bag perpendicular to the surface and apply steady pressure."
+  },
+  {
+    "element_id": "df089429-a307-4297-89df-91a216318252",
+    "name": "Shell Border Stroke",
+    "nozzle_recs": [
+      {
+        "nozzle_id": "ff7c0af8-2974-4c3d-a78a-f047eb92fb7d",
+        "brand": "Wilton",
+        "number": "13",
+        "name": "Open Star",
+        "rank": "primary",
+        "confidence": 1
+      },
+      {
+        "nozzle_id": "5a720771-d887-4b90-b354-0e23a26d1828",
+        "brand": "Wilton",
+        "number": "14",
+        "name": "Open Star",
+        "rank": "primary",
+        "confidence": 1
+      },
+      {
+        "nozzle_id": "a94e8148-478e-4f39-a5cf-8f5c9f6f4df2",
+        "brand": "Wilton",
+        "number": "16",
+        "name": "Open Star",
+        "rank": "primary",
+        "confidence": 1
+      }
+    ],
+    "consistency": "stiff",
+    "technique": "Hold the piping bag at a 45-degree angle and use a steady squeeze-release motion for defined shells."
+  },
+  {
+    "element_id": "9c06bdfe-2bdf-4038-8308-d0c57a3f4445",
+    "name": "Classic Shell Border",
+    "nozzle_recs": [
+      {
+        "nozzle_id": "a7addbc3-b6e6-442e-be02-3b87d782acc5",
+        "brand": "Wilton",
+        "number": "1M",
+        "name": "Open Star",
+        "rank": "primary",
+        "confidence": 1
+      },
+      {
+        "nozzle_id": "a6d4c62c-b40a-4f51-949f-b6d2f14ef3df",
+        "brand": "Wilton",
+        "number": "6B",
+        "name": "Open Star",
+        "rank": "primary",
+        "confidence": 1
+      },
+      {
+        "nozzle_id": "11f0d86c-8397-48d0-bac7-bc4724947b83",
+        "brand": "Ateco",
+        "number": "826",
+        "name": "Open Star",
+        "rank": "primary",
+        "confidence": 1
+      }
+    ],
+    "consistency": "stiff",
+    "technique": "Hold the tip at a 45-degree angle with steady pressure."
+  },
+  {
+    "element_id": "385e7324-5699-49d4-b99b-5cd7d16a7b38",
+    "name": "Three-Petal Drop",
+    "nozzle_recs": [
+      {
+        "nozzle_id": "e786453f-17d2-4f62-b4b9-12f5d945f9a8",
+        "brand": "Wilton",
+        "number": "106",
+        "name": "Drop Flower",
+        "rank": "primary",
+        "confidence": 0.9
+      },
+      {
+        "nozzle_id": "138b0243-1876-4775-b289-17d99b25cf27",
+        "brand": "Wilton",
+        "number": "107",
+        "name": "Drop Flower",
+        "rank": "primary",
+        "confidence": 0.9
+      },
+      {
+        "nozzle_id": "bcbe5ca0-5c87-4abe-be60-2c265e98280d",
+        "brand": "Wilton",
+        "number": "224",
+        "name": "Drop Flower",
+        "rank": "primary",
+        "confidence": 0.9
+      }
+    ],
+    "consistency": "stiff",
+    "technique": "Hold the tip perpendicular and apply steady pressure."
+  },
+  {
+    "element_id": "c08accb0-571d-4ead-9f86-01e64cc90711",
+    "name": "Scroll Shell Swirl",
+    "nozzle_recs": [
+      {
+        "nozzle_id": "03e9f66d-975b-4abe-ab55-25bc7c5e00ad",
+        "brand": "Wilton",
+        "number": "21",
+        "name": "Open Star",
+        "rank": "primary",
+        "confidence": 0.9
+      },
+      {
+        "nozzle_id": "a7addbc3-b6e6-442e-be02-3b87d782acc5",
+        "brand": "Wilton",
+        "number": "1M",
+        "name": "Open Star",
+        "rank": "primary",
+        "confidence": 0.9
+      },
+      {
+        "nozzle_id": "e78da875-11a9-437e-b8a9-2810c2474d7d",
+        "brand": "Wilton",
+        "number": "4B",
+        "name": "Open Star",
+        "rank": "secondary",
+        "confidence": 0.8
+      }
+    ],
+    "consistency": "stiff",
+    "technique": "Pipe at a 45-degree angle with consistent pressure for an even swirl."
+  },
+  {
+    "element_id": "4b9feeb0-7049-46c9-951d-8e050f5b7d77",
+    "name": "Curved Shell",
+    "nozzle_recs": [
+      {
+        "nozzle_id": "03e9f66d-975b-4abe-ab55-25bc7c5e00ad",
+        "brand": "Wilton",
+        "number": "21",
+        "name": "Open Star",
+        "rank": "primary",
+        "confidence": 0.95
+      },
+      {
+        "nozzle_id": "5a31f64b-b054-4b4e-aa2a-ed4fd094892d",
+        "brand": "Wilton",
+        "number": "32",
+        "name": "Open Star",
+        "rank": "primary",
+        "confidence": 0.95
+      },
+      {
+        "nozzle_id": "4aaff371-9fd7-4ac8-86c2-ac4bb32fabda",
+        "brand": "Ateco",
+        "number": "867",
+        "name": "French Star",
+        "rank": "alternative",
+        "confidence": 0.75
+      }
+    ],
+    "consistency": "medium",
+    "technique": "Hold the tip at a 30-degree angle and apply steady pressure for a smooth curve."
+  },
+  {
+    "element_id": "6b318cac-3ed0-47fe-b560-25535d27211a",
+    "name": "Teardrop",
+    "nozzle_recs": [
+      {
+        "nozzle_id": "b83ab496-ea45-4763-b8a5-0c9fcbba0b17",
+        "brand": "Wilton",
+        "number": "12",
+        "name": "Round",
+        "rank": "primary",
+        "confidence": 1
+      },
+      {
+        "nozzle_id": "5c0a9702-10dc-41c2-9319-ea0708330ff9",
+        "brand": "Wilton",
+        "number": "1A",
+        "name": "Large Round",
+        "rank": "primary",
+        "confidence": 1
+      },
+      {
+        "nozzle_id": "6a57cf42-da33-424d-87bf-1ded6794a742",
+        "brand": "Wilton",
+        "number": "2A",
+        "name": "Large Round",
+        "rank": "primary",
+        "confidence": 1
+      }
+    ],
+    "consistency": "stiff",
+    "technique": "Hold the nozzle at 90 degrees and apply steady pressure."
+  },
+  {
+    "element_id": "01fccfb5-934f-4cc1-84ca-f4e1701564bd",
+    "name": "Reverse Shell,",
+    "nozzle_recs": [
+      {
+        "nozzle_id": "a7addbc3-b6e6-442e-be02-3b87d782acc5",
+        "brand": "Wilton",
+        "number": "1M",
+        "name": "Open Star",
+        "rank": "primary",
+        "confidence": 0.95
+      },
+      {
+        "nozzle_id": "e78da875-11a9-437e-b8a9-2810c2474d7d",
+        "brand": "Wilton",
+        "number": "4B",
+        "name": "Open Star",
+        "rank": "primary",
+        "confidence": 0.95
+      },
+      {
+        "nozzle_id": "11f0d86c-8397-48d0-bac7-bc4724947b83",
+        "brand": "Ateco",
+        "number": "826",
+        "name": "Open Star",
+        "rank": "primary",
+        "confidence": 0.95
+      }
+    ],
+    "consistency": "medium",
+    "technique": "Use steady pressure and a slow, controlled motion."
+  },
+  {
+    "element_id": "4b66ebdb-8106-42e2-8261-f0ab3f034cf7",
+    "name": "Ribbon Swag",
+    "nozzle_recs": [
+      {
+        "nozzle_id": "db5eae18-109b-4b62-86b0-e464b34a80ab",
+        "brand": "Wilton",
+        "number": "3",
+        "name": "Round",
+        "rank": "primary",
+        "confidence": 0.9
+      },
+      {
+        "nozzle_id": "4bf6059c-c417-432f-b7c3-907b042340ce",
+        "brand": "Wilton",
+        "number": "4",
+        "name": "Round",
+        "rank": "primary",
+        "confidence": 0.9
+      },
+      {
+        "nozzle_id": "1852cdaa-2089-4eff-ada4-95271e099432",
+        "brand": "Wilton",
+        "number": "5",
+        "name": "Round",
+        "rank": "primary",
+        "confidence": 0.9
+      }
+    ],
+    "consistency": "medium",
+    "technique": "Pipe a steady rounded string, dropping into even swags."
+  },
+  {
+    "element_id": "4d3247b1-8c16-4181-a839-722daaae888c",
+    "name": "Swag Garland",
+    "nozzle_recs": [
+      {
+        "nozzle_id": "db5eae18-109b-4b62-86b0-e464b34a80ab",
+        "brand": "Wilton",
+        "number": "3",
+        "name": "Round",
+        "rank": "primary",
+        "confidence": 0.9
+      },
+      {
+        "nozzle_id": "4bf6059c-c417-432f-b7c3-907b042340ce",
+        "brand": "Wilton",
+        "number": "4",
+        "name": "Round",
+        "rank": "primary",
+        "confidence": 0.9
+      },
+      {
+        "nozzle_id": "1852cdaa-2089-4eff-ada4-95271e099432",
+        "brand": "Wilton",
+        "number": "5",
+        "name": "Round",
+        "rank": "primary",
+        "confidence": 0.9
+      }
+    ],
+    "consistency": "medium",
+    "technique": "Pipe smooth round strings into repeated scalloped swags around the tier."
+  },
+  {
+    "element_id": "f0eb04ab-e40b-444f-83b6-72bae2ff3674",
+    "name": "Garland",
+    "nozzle_recs": [
+      {
+        "nozzle_id": "db5eae18-109b-4b62-86b0-e464b34a80ab",
+        "brand": "Wilton",
+        "number": "3",
+        "name": "Round",
+        "rank": "primary",
+        "confidence": 0.9
+      },
+      {
+        "nozzle_id": "4bf6059c-c417-432f-b7c3-907b042340ce",
+        "brand": "Wilton",
+        "number": "4",
+        "name": "Round",
+        "rank": "primary",
+        "confidence": 0.9
+      },
+      {
+        "nozzle_id": "1852cdaa-2089-4eff-ada4-95271e099432",
+        "brand": "Wilton",
+        "number": "5",
+        "name": "Round",
+        "rank": "primary",
+        "confidence": 0.9
+      }
+    ],
+    "consistency": "medium",
+    "technique": "Pipe a smooth continuous line, letting it drop into even scalloped swags."
+  },
+  {
+    "element_id": "89d860b8-076c-4c44-91f9-a4708fe47054",
+    "name": "Rosette",
+    "nozzle_recs": [
+      {
+        "nozzle_id": "a7addbc3-b6e6-442e-be02-3b87d782acc5",
+        "brand": "Wilton",
+        "number": "1M",
+        "name": "Open Star",
+        "rank": "primary",
+        "confidence": 0.95
+      },
+      {
+        "nozzle_id": "684e0d28-8c91-4cdd-adf4-9393d545c4b6",
+        "brand": "Wilton",
+        "number": "2D",
+        "name": "Drop Flower",
+        "rank": "secondary",
+        "confidence": 0.8
+      }
+    ],
+    "consistency": "medium",
+    "technique": "Hold the tip perpendicular and swirl with consistent pressure."
+  },
+  {
+    "element_id": "7b611d60-ca7a-46a4-8350-018d9bfd2ff9",
+    "name": "Draped Ribbon",
+    "nozzle_recs": [
+      {
+        "nozzle_id": "733cf7fb-9417-4356-9a0f-b075938bd82a",
+        "brand": "Wilton",
+        "number": "104",
+        "name": "Petal",
+        "rank": "primary",
+        "confidence": 1
+      },
+      {
+        "nozzle_id": "fdf8f9c2-8a7f-42dc-8e80-7cab5944d72d",
+        "brand": "Wilton",
+        "number": "125",
+        "name": "Petal",
+        "rank": "primary",
+        "confidence": 1
+      },
+      {
+        "nozzle_id": "a4a8660f-f5e0-4c41-be77-13e88d1e3455",
+        "brand": "Wilton",
+        "number": "127",
+        "name": "Petal",
+        "rank": "primary",
+        "confidence": 1
+      }
+    ],
+    "consistency": "medium",
+    "technique": "Hold the tip at a 45-degree angle and use even pressure to create the draped effect."
+  }
+]

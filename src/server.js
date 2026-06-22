@@ -20,6 +20,7 @@ import meshyRouter from './routes/meshy.js';
 import webhooksRouter from './routes/webhooks.js';
 import inspirationRouter from './routes/inspiration.js';
 import texturesRouter from './routes/textures.js';
+import materialsRouter from './routes/materials.js';
 
 const app = express();
 
@@ -52,5 +53,6 @@ app.use('/api', meshyRouter);
 app.use('/api', webhooksRouter);
 app.use('/api', inspirationRouter);
 app.use('/api', texturesRouter);
+app.use('/api', materialsRouter);
 
 export default app;

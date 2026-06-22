@@ -16,6 +16,7 @@ const ALLOWED_FOLDERS = [
   'portraits',             // baker portrait for the storefront "Our story" section
   'storefront/gallery',    // baker cake photos for the storefront slideshow
   'orders/thumbnails',
+  'customer/photos',   // customer-uploaded photo for a photo-cake frame (public so the designer can texture it)
   'meshy/source',   // uploaded 2D image for the image→3D wizard (public so Meshy can fetch it)
   'meshy/outputs',  // our copy of the Meshy-generated GLB (written server-side via putObject)
 ];
@@ -32,7 +33,11 @@ router.post('/storage/sign-upload', requireAuth, requireCapability('design:creat
 
     const key = `${folder}/${filename}`;
     const url = await getSignedUploadUrl(key, contentType);
-    res.json({ url, key });
+    // publicUrl: the directly-loadable URL for `key`, so a client that needs to render the asset
+    // immediately (e.g. a photo-cake frame texture persisted inside design JSON) can store a stable
+    // URL without re-deriving the R2 base. Bare `key` is still returned for DB columns the API expands.
+    const publicUrl = config.r2.publicUrl ? `${config.r2.publicUrl}/${key}` : null;
+    res.json({ url, key, publicUrl });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

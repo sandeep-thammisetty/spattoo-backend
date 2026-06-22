@@ -25,7 +25,11 @@ function expandPlacementConfig(pc) {
   const out = { ...pc };
   if (out.top_alt_glb_url)    out.top_alt_glb_url    = toPublicUrl(out.top_alt_glb_url);
   if (out.bottom_alt_glb_url) out.bottom_alt_glb_url = toPublicUrl(out.bottom_alt_glb_url);
-  if (out.photo?.mask)        out.photo = { ...out.photo, mask: toPublicUrl(out.photo.mask) };
+  if (out.photo?.mask || out.photo?.overlay) {
+    out.photo = { ...out.photo };
+    if (out.photo.mask)    out.photo.mask    = toPublicUrl(out.photo.mask);
+    if (out.photo.overlay) out.photo.overlay = toPublicUrl(out.photo.overlay);
+  }
   return out;
 }
 

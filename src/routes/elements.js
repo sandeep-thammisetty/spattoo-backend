@@ -12,7 +12,21 @@ const router = Router();
 
 function toPublicUrl(key) {
   if (!key) return null;
+  if (/^https?:\/\//i.test(key)) return key;   // already a full URL — don't double-prefix
   return `${config.r2.publicUrl}/${key}`;
+}
+
+// Expand R2 keys nested INSIDE placement_config (the photo-frame window mask, the alternate piping
+// GLBs) to public URLs — the same treatment the top-level image_url/thumbnail_url columns get. The
+// DB stores bare keys; the designer loads these straight into texture/GLB loaders, which need full
+// URLs. Only for the designer-facing /elements responses (admin keeps raw keys for editing).
+function expandPlacementConfig(pc) {
+  if (!pc || typeof pc !== 'object') return pc;
+  const out = { ...pc };
+  if (out.top_alt_glb_url)    out.top_alt_glb_url    = toPublicUrl(out.top_alt_glb_url);
+  if (out.bottom_alt_glb_url) out.bottom_alt_glb_url = toPublicUrl(out.bottom_alt_glb_url);
+  if (out.photo?.mask)        out.photo = { ...out.photo, mask: toPublicUrl(out.photo.mask) };
+  return out;
 }
 
 router.get('/element-types', requireAuth, requireCapability('design:create'), async (req, res) => {
@@ -101,8 +115,9 @@ router.get('/elements', requireAuth, requireCapability('design:create'), async (
       if (error) return res.status(500).json({ error: error.message });
       return res.json(data.map(el => ({
         ...el,
-        image_url:     toPublicUrl(el.image_url),
-        thumbnail_url: toPublicUrl(el.thumbnail_url),
+        image_url:        toPublicUrl(el.image_url),
+        thumbnail_url:    toPublicUrl(el.thumbnail_url),
+        placement_config: expandPlacementConfig(el.placement_config),
       })));
     }
 
@@ -119,8 +134,9 @@ router.get('/elements', requireAuth, requireCapability('design:create'), async (
 
     res.json(data.map(el => ({
       ...el,
-      image_url:     toPublicUrl(el.image_url),
-      thumbnail_url: toPublicUrl(el.thumbnail_url),
+      image_url:        toPublicUrl(el.image_url),
+      thumbnail_url:    toPublicUrl(el.thumbnail_url),
+      placement_config: expandPlacementConfig(el.placement_config),
     })));
   } catch (err) {
     res.status(500).json({ error: err.message });

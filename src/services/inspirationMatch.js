@@ -30,14 +30,14 @@ async function retrieve(queryEmbedding, k = SHORTLIST) {
     const sim = new Map(rpc.data.map(r => [r.id, r.similarity]));
     const { data: rows } = await supabase
       .from('cake_elements')
-      .select('id, name, default_color, allowed_zones, placement_config, thumbnail_url, element_types(name)')
+      .select('id, name, default_color, allowed_zones, placement_config, image_url, thumbnail_url, element_types(name)')
       .in('id', [...sim.keys()]);
     return (rows || []).map(r => ({ ...r, similarity: sim.get(r.id) ?? 0 })).sort((a, b) => b.similarity - a.similarity);
   }
   // fallback: fetch all active embeddings + cosine in JS
   const { data: all } = await supabase
     .from('cake_elements')
-    .select('id, name, default_color, allowed_zones, placement_config, thumbnail_url, description_embedding, element_types(name)')
+    .select('id, name, default_color, allowed_zones, placement_config, image_url, thumbnail_url, description_embedding, element_types(name)')
     .not('description_embedding', 'is', null).is('baker_id', null).eq('is_active', true);
   return (all || []).map(r => {
     const { description_embedding, ...rest } = r;
@@ -69,7 +69,14 @@ async function matchDecoration(deco) {
   const scored = cands
     .map(c => {
       const s = scoreCandidate(deco, c);
-      return s && { id: c.id, name: c.name, element_type: c.element_types?.name, thumbnail_url: publicUrl(c.thumbnail_url), ...s };
+      // Render-ready fields (image_url/placement_config/default_color/allowed_zones) ride along so a
+      // consumer can build a live preview from the match — already fetched here, so no extra query.
+      return s && {
+        id: c.id, name: c.name, element_type: c.element_types?.name,
+        thumbnail_url: publicUrl(c.thumbnail_url), image_url: publicUrl(c.image_url),
+        placement_config: c.placement_config, default_color: c.default_color, allowed_zones: c.allowed_zones,
+        ...s,
+      };
     })
     .filter(Boolean)
     .sort((a, b) => b.score - a.score);

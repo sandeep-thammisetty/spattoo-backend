@@ -59,7 +59,9 @@ export const config = {
   telemetry: {
     dsn:         process.env.SENTRY_DSN,
     environment: process.env.NODE_ENV || 'development',
-    release:     process.env.RELEASE_VERSION,   // e.g. git SHA, set by Render
+    // Release = git SHA for "which deploy introduced this error" + suspect-commits.
+    // Render auto-provides RENDER_GIT_COMMIT, so no manual env needed in prod.
+    release:     process.env.RELEASE_VERSION || process.env.RENDER_GIT_COMMIT,
   },
   // Customer storefront URL template; `{slug}` is replaced with the baker slug
   // (subdomain model). Invite link = `${template-with-slug}/?invite=<id>`.

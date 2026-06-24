@@ -21,10 +21,13 @@ import webhooksRouter from './routes/webhooks.js';
 import inspirationRouter from './routes/inspiration.js';
 import texturesRouter from './routes/textures.js';
 import materialsRouter from './routes/materials.js';
+import { requestId } from './middleware/requestId.js';
+import { errorHandler } from './middleware/errorHandler.js';
 
 const app = express();
 
 app.use(cors());
+app.use(requestId);   // correlation id on every request — must run first
 
 // Webhooks need the raw body (signature verification / unsigned-but-verified-by-refetch) —
 // mount before express.json() so the body isn't consumed as JSON first.
@@ -54,5 +57,7 @@ app.use('/api', webhooksRouter);
 app.use('/api', inspirationRouter);
 app.use('/api', texturesRouter);
 app.use('/api', materialsRouter);
+
+app.use(errorHandler);   // global safety net — must run last, after all routers
 
 export default app;

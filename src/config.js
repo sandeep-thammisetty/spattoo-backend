@@ -52,6 +52,15 @@ export const config = {
     pass: process.env.SMTP_PASS,
     from: process.env.SMTP_FROM || process.env.SMTP_USER,
   },
+  // Error telemetry. DSN is optional (like meshy/razorpay) so local boot never
+  // fails without it — telemetry falls back to structured console logging.
+  // The vendor lives behind src/lib/telemetry.js; swapping Sentry for GlitchTip
+  // (Sentry-API-compatible) or a self-hosted sink is a one-file change there.
+  telemetry: {
+    dsn:         process.env.SENTRY_DSN,
+    environment: process.env.NODE_ENV || 'development',
+    release:     process.env.RELEASE_VERSION,   // e.g. git SHA, set by Render
+  },
   // Customer storefront URL template; `{slug}` is replaced with the baker slug
   // (subdomain model). Invite link = `${template-with-slug}/?invite=<id>`.
   //   dev:  http://{slug}.localhost:5173

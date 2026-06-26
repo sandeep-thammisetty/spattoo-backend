@@ -5,12 +5,13 @@
 -- real, managed lookup table with referential integrity + display metadata. This
 -- is the canonical order lifecycle.
 --
--- DESIGN: `key` is the natural primary key (a readable slug). `orders.status` stays
--- TEXT but becomes a FOREIGN KEY to order_statuses(key) — so it is no longer
--- uncontrolled text (the FK rejects any value not in this table), yet every
--- existing readable query (.eq('status','ready'), group-by status, UI
--- `status === 'delivered'`) keeps working unchanged, and we avoid magic-number ids.
--- Statuses are now DATA: add/retire one, or re-label/re-order, by editing rows here.
+-- DESIGN: this lookup is bounded (~10 rows, forever — it's an enum with metadata).
+-- It carries a surrogate `id` (smallint PK) AND a readable `key` (UNIQUE). The HIGH-
+-- VOLUME `orders` table references the compact `id` (see order_status_surrogate.sql),
+-- not the text key — because at millions of orders the text value bloats the row and
+-- every status index. The readable `key` is preserved for humans + queries; the API
+-- joins to expose it, so callers still speak keys ('ready'), never magic numbers.
+-- Statuses are DATA: add/retire one, or re-label/re-order, by editing rows here.
 --
 -- The lifecycle merges the quote phase (new) with the fulfillment phase (existing):
 --   initiated → requested → quoted → confirmed → in_production → ready → completed
@@ -54,46 +55,11 @@ ON CONFLICT (key) DO UPDATE SET
   customer_visible = EXCLUDED.customer_visible,
   tone             = EXCLUDED.tone;
 
--- ── Migrate orders.status onto the lifecycle ──────────────────────────────────
--- Backfill legacy values BEFORE adding the FK so existing rows stay valid.
-UPDATE orders SET status = 'requested'     WHERE status = 'pending';
-UPDATE orders SET status = 'confirmed'     WHERE status = 'approved';
-UPDATE orders SET status = 'in_production'  WHERE status = 'in_progress';
-UPDATE orders SET status = 'completed'      WHERE status = 'delivered';
-
--- Remove deprecated status rows if a prior version of this file seeded them
--- (no orders reference these after the backfill above, so this is FK-safe).
-DELETE FROM order_statuses WHERE key IN ('in_progress', 'delivered');
-
--- Default new orders to 'requested' (customer request / order placed, awaiting baker).
-ALTER TABLE orders ALTER COLUMN status SET DEFAULT 'requested';
-
--- Fail loudly (naming the offenders) if any order still holds a status not in the
--- lookup — so the FK add below can't fail with a vague "violates foreign key" error.
--- If this fires, add the missing key to the seed above, or a backfill UPDATE for it.
-DO $$
-DECLARE orphans text;
-BEGIN
-  SELECT string_agg(DISTINCT o.status, ', ') INTO orphans
-  FROM orders o
-  WHERE o.status IS NOT NULL
-    AND NOT EXISTS (SELECT 1 FROM order_statuses s WHERE s.key = o.status);
-  IF orphans IS NOT NULL THEN
-    RAISE EXCEPTION 'orders.status has values not in order_statuses: %', orphans;
-  END IF;
-END $$;
-
--- Add the FK once (ADD CONSTRAINT has no IF NOT EXISTS — guard it).
-DO $$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint WHERE conname = 'orders_status_fkey'
-  ) THEN
-    ALTER TABLE orders
-      ADD CONSTRAINT orders_status_fkey
-      FOREIGN KEY (status) REFERENCES order_statuses(key);
-  END IF;
-END $$;
+-- ── orders.status storage ─────────────────────────────────────────────────────
+-- How orders REFERENCE this lookup lives in `order_status_surrogate.sql`, run after
+-- this file. orders stores a compact smallint `status_id` FK → order_statuses(id),
+-- NOT the text key — text on a million-row table bloats the row + every status index.
+-- (See the surrogate migration + INVARIANTS "design for scale".)
 
 -- ── Quote fields on the order (per the Pricing & Quote plan §3) ────────────────
 -- suggested_price is internal-only (the baker's algorithm starting point); the

@@ -64,3 +64,16 @@ export async function notifyDesignUpdated({ order, baker, customer, mode = 'upda
     thumbnailUrl:      order.design_thumbnail_url ?? null,
   });
 }
+
+// Baker issued a quote. Email the customer the price + a link to review/accept it.
+export async function notifyQuoteIssued({ order, baker, customer }) {
+  if (!customer?.email) return;
+  await insertNotification('quote_issued_customer', customer.email, {
+    customerFirstName: customer.first_name,
+    bakerName:         baker.name,
+    bakerSlug:         baker.slug ?? null,
+    orderId:           order.id,
+    quotedPrice:       order.quoted_price ?? null,
+    quoteValidUntil:   order.quote_valid_until ?? null,
+  });
+}

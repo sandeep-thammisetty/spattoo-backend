@@ -102,6 +102,29 @@ function buildEmail(typeSlug, recipientEmail, payload) {
     };
   }
 
+  if (typeSlug === 'quote_issued_customer') {
+    const link = p.bakerSlug
+      ? config.storefront.urlTemplate.replace('{slug}', p.bakerSlug)
+      : null;
+    const priceLine = p.quotedPrice != null ? `Your quote: <b>₹${p.quotedPrice}</b>` : "Your quote is ready";
+    const validLine = p.quoteValidUntil
+      ? `<p style="color:#888;font-size:13px">Valid until ${formatDate(p.quoteValidUntil)}.</p>`
+      : "";
+    return {
+      from:    `${p.bakerName} <${rawEmail(config.smtp.from)}>`,
+      to:      recipientEmail,
+      subject: `${p.bakerName} sent you a quote`,
+      html: `<div style="font-family:sans-serif;max-width:560px;margin:0 auto">
+        <h2 style="color:#2C4433">Your quote is ready 🎂</h2>
+        <p>Hi ${p.customerFirstName}, <b>${p.bakerName}</b> has priced your cake.</p>
+        <p style="font-size:16px">${priceLine}</p>
+        ${validLine}
+        ${link ? `<p style="margin-top:24px"><a href="${link}" style="display:inline-block;background:#2C4433;color:#fff;text-decoration:none;padding:12px 28px;border-radius:10px;font-weight:700">Review your quote</a></p>` : ''}
+        <p style="color:#888;font-size:12px;margin-top:24px">Powered by Spattoo</p>
+      </div>`,
+    };
+  }
+
   throw new Error(`Unknown notification type: ${typeSlug}`);
 }
 

@@ -3,7 +3,7 @@ import { supabase } from '../services/supabase.js';
 import { requireAuth } from '../middleware/auth.js';
 import { requireCapability } from '../middleware/rbac.js';
 import { config } from '../config.js';
-import { notifyOrderPlaced, notifyDesignUpdated } from '../services/notifications.js';
+import { notifyOrderPlaced, notifyDesignUpdated, notifyQuoteIssued } from '../services/notifications.js';
 import { getOrderStatuses, getValidStatusKeys, isQuotePhase } from '../lib/orderStatuses.js';
 
 function toPublicUrl(key) {
@@ -434,6 +434,70 @@ router.patch('/orders/:id/status', requireAuth, requireCapability('order:manage'
     });
 
     res.json(order);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── POST /api/orders/:id/quote ────────────────────────────────────────────────
+// Baker issues (or re-issues) the quote: captures the price + optional line items,
+// PINS the quote to the CURRENT design version, flips status → 'quoted', and emails
+// the customer. Re-issuing with the same price on a stale quote = "price holds"
+// (re-pin to the current version). Rejected once the order is past the quote phase.
+router.post('/orders/:id/quote', requireAuth, requireCapability('order:manage'), async (req, res) => {
+  try {
+    const { price, lineItems, validUntil, comment } = req.body;
+    const priceNum = Number(price);
+    if (!Number.isFinite(priceNum) || priceNum <= 0) {
+      return res.status(400).json({ error: 'price must be a positive number' });
+    }
+
+    const { data: appUser } = await supabase
+      .from('baker_appusers').select('baker_id, id, first_name, last_name')
+      .eq('auth_user_id', req.user.id).maybeSingle();
+    if (!appUser) return res.status(403).json({ error: 'Not a baker account' });
+
+    const { data: existing } = await supabase
+      .from('orders')
+      .select('status, current_version_id, bakers(name, slug), customers(email, first_name)')
+      .eq('id', req.params.id).eq('baker_id', appUser.baker_id).maybeSingle();
+    if (!existing) return res.status(404).json({ error: 'Order not found' });
+
+    // Quote only before the order is confirmed (design still open).
+    if (!(await isQuotePhase(existing.status))) {
+      return res.status(409).json({ error: 'A quote can only be issued before the order is confirmed.' });
+    }
+
+    const { data: order, error } = await supabase
+      .from('orders')
+      .update({
+        quoted_price:      priceNum,
+        quote_line_items:  Array.isArray(lineItems) ? lineItems : null,
+        quote_valid_until: validUntil ?? null,
+        priced_at:         new Date().toISOString(),
+        status:            'quoted',
+        quoted_version_id: existing.current_version_id,   // pin to the priced design
+      })
+      .eq('id', req.params.id).eq('baker_id', appUser.baker_id)
+      .select('id, status, quoted_price, quote_line_items, quote_valid_until, priced_at, quoted_version_id, current_version_id')
+      .maybeSingle();
+    if (error) return res.status(500).json({ error: error.message });
+
+    await supabase.from('order_audit_log').insert({
+      order_id: req.params.id, baker_id: appUser.baker_id,
+      event: 'quoted', comment: comment ?? null,
+      changes: { quoted_price: { to: priceNum } },
+      changed_by_name: `${appUser.first_name ?? ''} ${appUser.last_name ?? ''}`.trim() || req.user.email,
+    });
+
+    notifyQuoteIssued({
+      order:    { id: req.params.id, quoted_price: priceNum, quote_valid_until: validUntil ?? null },
+      baker:    existing.bakers ?? {},
+      customer: existing.customers ?? {},
+    }).catch(err => console.error('[notifications] quote issued failed:', err.message));
+
+    // Freshly pinned to the current version → never stale right after issuing.
+    res.json({ ...order, quote_stale: false });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

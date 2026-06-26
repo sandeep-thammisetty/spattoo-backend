@@ -49,3 +49,42 @@ export async function notifyOrderPlaced({ order, baker, customer }) {
 
   await Promise.all(jobs);
 }
+
+// Baker edited the design while it's still open (shared-pen window). Email the
+// customer that there are recommendations / an update to review. `mode` tunes the
+// copy: 'recommendations' (initiated) vs 'updated' (quoted, i.e. after a quote).
+export async function notifyDesignUpdated({ order, baker, customer, mode = 'updated' }) {
+  if (!customer?.email) return;
+  await insertNotification('design_updated_customer', customer.email, {
+    customerFirstName: customer.first_name,
+    bakerName:         baker.name,
+    bakerSlug:         baker.slug ?? null,
+    orderId:           order.id,
+    mode,                                   // 'recommendations' | 'updated'
+    thumbnailUrl:      order.design_thumbnail_url ?? null,
+  });
+}
+
+// Baker issued a quote. Email the customer the price + a link to review/accept it.
+export async function notifyQuoteIssued({ order, baker, customer }) {
+  if (!customer?.email) return;
+  await insertNotification('quote_issued_customer', customer.email, {
+    customerFirstName: customer.first_name,
+    bakerName:         baker.name,
+    bakerSlug:         baker.slug ?? null,
+    orderId:           order.id,
+    quotedPrice:       order.quoted_price ?? null,
+    quoteValidUntil:   order.quote_valid_until ?? null,
+  });
+}
+
+// Customer accepted the quote → order confirmed. Email the baker.
+export async function notifyQuoteAccepted({ order, baker, customer }) {
+  if (!baker?.email) return;
+  const customerName = [customer.first_name, customer.last_name].filter(Boolean).join(' ');
+  await insertNotification('quote_accepted_baker', baker.email, {
+    customerName,
+    orderId:    order.id,
+    finalPrice: order.final_price ?? order.quoted_price ?? null,
+  });
+}

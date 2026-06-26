@@ -40,16 +40,16 @@ router.get('/baker/dashboard', requireAuth, requireCapability('order:view'), asy
       supabase.from('orders').select('id', { count: 'exact', head: true })
         .eq('baker_id', baker_id).gte('created_at', ago7Days),
 
-      // Pending count
+      // Awaiting-baker count (new requests needing review)
       supabase.from('orders').select('id', { count: 'exact', head: true })
-        .eq('baker_id', baker_id).eq('status', 'pending'),
+        .eq('baker_id', baker_id).eq('status', 'requested'),
 
       // Due today or tomorrow
       supabase.from('orders')
         .select('id, delivery_date, delivery_mode, status, customers(first_name, last_name)')
         .eq('baker_id', baker_id)
         .in('delivery_date', [today, tomorrow])
-        .not('status', 'in', '(delivered,cancelled)')
+        .not('status', 'in', '(completed,cancelled,declined,expired)')
         .order('delivery_date'),
 
       // Active customers
@@ -65,7 +65,7 @@ router.get('/baker/dashboard', requireAuth, requireCapability('order:view'), asy
         .select('id, delivery_date, delivery_time, delivery_mode, status, customers(first_name, last_name)')
         .eq('baker_id', baker_id)
         .in('delivery_date', [today, tomorrow])
-        .not('status', 'in', '(ready,delivered,cancelled)')
+        .not('status', 'in', '(ready,completed,cancelled,declined,expired)')
         .order('delivery_date').order('delivery_time'),
 
       // Upcoming deliveries next 7 days
@@ -73,7 +73,7 @@ router.get('/baker/dashboard', requireAuth, requireCapability('order:view'), asy
         .select('id, delivery_date, delivery_mode, delivery_time, status, customers(first_name, last_name)')
         .eq('baker_id', baker_id)
         .gte('delivery_date', today).lte('delivery_date', in7Days)
-        .not('status', 'in', '(delivered,cancelled)')
+        .not('status', 'in', '(completed,cancelled,declined,expired)')
         .order('delivery_date').order('delivery_time'),
 
       // All non-cancelled orders for status breakdown + delivery split

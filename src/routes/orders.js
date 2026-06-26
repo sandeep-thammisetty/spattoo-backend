@@ -702,10 +702,15 @@ router.post('/orders/:id/quote', requireAuth, requireCapability('order:manage'),
       .maybeSingle();
     if (error) return res.status(500).json({ error: error.message });
 
+    const noteVal = (note ?? '').toString().trim() || null;
     await supabase.from('order_audit_log').insert({
       order_id: req.params.id, baker_id: appUser.baker_id,
       event: 'quoted', comment: comment ?? null,
-      changes: { quoted_price: { to: priceNum } },
+      changes: {
+        quoted_price: { to: priceNum },
+        ...(advanceNum != null ? { advance: { to: advanceNum } } : {}),
+        ...(noteVal ? { note: { to: noteVal } } : {}),
+      },
       changed_by_name: `${appUser.first_name ?? ''} ${appUser.last_name ?? ''}`.trim() || req.user.email,
     });
 

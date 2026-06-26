@@ -103,7 +103,8 @@ export async function notifyDesignUpdated({ order, baker, customer, mode = 'upda
   });
 }
 
-// Baker issued a quote. Email the customer the price + a link to review/accept it.
+// Baker issued a quote. Email the customer the price + advance + the baker's note,
+// with a link to review/approve it.
 export async function notifyQuoteIssued({ order, baker, customer }) {
   if (!customer?.email) return;
   await insertNotification('quote_issued_customer', customer.email, {
@@ -113,10 +114,13 @@ export async function notifyQuoteIssued({ order, baker, customer }) {
     orderId:           order.id,
     quotedPrice:       order.quoted_price ?? null,
     quoteValidUntil:   order.quote_valid_until ?? null,
+    advanceAmount:     order.advance_amount ?? null,
+    quoteNote:         order.quote_note ?? null,
   });
 }
 
-// Customer accepted the quote → order confirmed. Email the baker.
+// Customer approved the quote (design + price agreed). Email the baker so they can
+// collect the advance and confirm.
 export async function notifyQuoteAccepted({ order, baker, customer }) {
   const bakerEmail = await bakerNotifyEmail(baker);
   if (!bakerEmail) return;
@@ -125,5 +129,30 @@ export async function notifyQuoteAccepted({ order, baker, customer }) {
     customerName,
     orderId:    order.id,
     finalPrice: order.final_price ?? order.quoted_price ?? null,
+  });
+}
+
+// Customer asked a question on the quote ("Talk to {baker}"). Email the baker the note.
+export async function notifyQuoteQuestion({ order, baker, customer, message }) {
+  const bakerEmail = await bakerNotifyEmail(baker);
+  if (!bakerEmail) return;
+  const customerName = [customer.first_name, customer.last_name].filter(Boolean).join(' ');
+  await insertNotification('quote_question_baker', bakerEmail, {
+    customerName,
+    orderId: order.id,
+    message,
+  });
+}
+
+// Baker confirmed the order (advance received). Email the customer.
+export async function notifyOrderConfirmed({ order, baker, customer }) {
+  if (!customer?.email) return;
+  await insertNotification('order_confirmed_customer', customer.email, {
+    customerFirstName: customer.first_name,
+    bakerName:         baker.name,
+    bakerSlug:         baker.slug ?? null,
+    orderId:           order.id,
+    finalPrice:        order.final_price ?? null,
+    thumbnailUrl:      order.design_thumbnail_url ?? null,
   });
 }

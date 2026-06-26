@@ -79,6 +79,29 @@ function buildEmail(typeSlug, recipientEmail, payload) {
     };
   }
 
+  if (typeSlug === 'design_updated_customer') {
+    const isReco = p.mode === 'recommendations';
+    const link = p.bakerSlug
+      ? config.storefront.urlTemplate.replace('{slug}', p.bakerSlug)
+      : null;
+    return {
+      from:    `${p.bakerName} <${rawEmail(config.smtp.from)}>`,
+      to:      recipientEmail,
+      subject: isReco
+        ? `${p.bakerName} has design ideas for your cake`
+        : `${p.bakerName} updated your cake design`,
+      html: `<div style="font-family:sans-serif;max-width:560px;margin:0 auto">
+        <h2 style="color:#2C4433">${isReco ? 'A few ideas for your cake 🎨' : 'Your design was updated 🎂'}</h2>
+        <p>Hi ${p.customerFirstName}, <b>${p.bakerName}</b> ${isReco
+          ? 'has suggested some changes to your cake design'
+          : 'has updated your cake design'}. Open the designer to take a look — you can keep refining it yourself.</p>
+        ${thumbnailHtml}
+        ${link ? `<p style="margin-top:24px"><a href="${link}" style="display:inline-block;background:#2C4433;color:#fff;text-decoration:none;padding:12px 28px;border-radius:10px;font-weight:700">View your design</a></p>` : ''}
+        <p style="color:#888;font-size:12px;margin-top:24px">Powered by Spattoo</p>
+      </div>`,
+    };
+  }
+
   throw new Error(`Unknown notification type: ${typeSlug}`);
 }
 

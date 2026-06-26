@@ -75,6 +75,31 @@ router.get('/storefront/:slug', async (req, res) => {
   }
 });
 
+// ── GET /api/storefront/:slug/settings ────────────────────────────────────────
+// Public. Only the customer-relevant slice of the baker's settings the designer
+// needs (delivery options + store hours) — NOT the full settings blob, which may
+// hold internal config. Used by the customer designer's apiClient.fetchBakerSettings.
+router.get('/storefront/:slug/settings', async (req, res) => {
+  try {
+    const { data: baker, error } = await supabase
+      .from('bakers')
+      .select('settings, storefront_published')
+      .eq('slug', req.params.slug)
+      .eq('is_active', true)
+      .maybeSingle();
+    if (error)  return res.status(500).json({ error: error.message });
+    if (!baker || !baker.storefront_published) return res.status(404).json({ error: 'Storefront not found' });
+
+    const s = baker.settings ?? {};
+    res.json({
+      delivery:    { home_delivery: !!s.delivery?.home_delivery },
+      store_hours: s.store_hours ?? null,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── GET /api/invite/:id ───────────────────────────────────────────────────────
 // Public landing for an invite link. Returns baker branding + the MASKED contact
 // to prefill/lock on the login screen, plus validity. Marks the invite opened.
@@ -196,6 +221,20 @@ router.post('/invite/:id/verify-otp', async (req, res) => {
       error = r.error;
     }
     if (!data?.session) return res.status(401).json({ error: error?.message || 'Invalid or expired code' });
+
+    // Bind this customer to the authenticated user — the one moment we hold both
+    // the invite's customer_id and the freshly verified session's user id. This is
+    // what lets order routes later derive the customer FROM THE TOKEN instead of
+    // trusting a client-supplied identity. Bind only when unbound (never overwrite
+    // an existing binding → no account takeover); a repeat login is a harmless no-op.
+    const authUserId = data.session.user?.id;
+    if (authUserId) {
+      await supabase
+        .from('customers')
+        .update({ auth_user_id: authUserId })
+        .eq('id', invite.customer_id)
+        .is('auth_user_id', null);
+    }
 
     res.json({
       session: {

@@ -3,11 +3,113 @@ import { supabase } from '../services/supabase.js';
 import { requireAuth } from '../middleware/auth.js';
 import { requireCapability } from '../middleware/rbac.js';
 import { config } from '../config.js';
-import { notifyOrderPlaced } from '../services/notifications.js';
+import { notifyOrderPlaced, notifyDesignUpdated } from '../services/notifications.js';
+import { getOrderStatuses, getValidStatusKeys, isQuotePhase } from '../lib/orderStatuses.js';
 
 function toPublicUrl(key) {
   if (!key) return null;
   return `${config.r2.publicUrl}/${key}`;
+}
+
+// A quote is "stale" when a design version exists past the one it priced — i.e. the
+// design changed after the quote was issued. Derived, never stored.
+function quoteStale(order) {
+  return !!order.quoted_version_id && order.quoted_version_id !== order.current_version_id;
+}
+
+// Shared validation for the design + delivery part of an order body. Customer
+// identity is validated separately because the trust boundary differs per entry
+// point (public form vs. authenticated session). Returns an error string or null.
+function validateOrderBody(body) {
+  const { designSnapshot, deliveryMode = 'pickup', deliveryAddress } = body;
+  if (!designSnapshot) return 'designSnapshot is required';
+  if (!['pickup', 'home_delivery'].includes(deliveryMode)) return 'deliveryMode must be pickup or home_delivery';
+  if (deliveryMode === 'home_delivery' && !deliveryAddress) return 'deliveryAddress is required for home_delivery';
+  return null;
+}
+
+// Shared order creation: insert the row + fire-and-forget the baker notification.
+// Callers resolve the baker and the customer FIRST (that's where the trust
+// boundary lives) and hand a resolved customerId + contact here. Throws on insert
+// error so the caller's try/catch maps it to a 500.
+async function insertOrderAndNotify({ baker, customerId, customerContact, body, authoredBy = 'customer' }) {
+  const {
+    designSnapshot, designThumbnailKey, weightKg, flavours,
+    specialInstructions, deliveryDate, deliveryTime,
+    deliveryMode = 'pickup', deliveryAddress,
+  } = body;
+
+  const thumbnailUrl = designThumbnailKey ?? null;
+
+  const { data: order, error: orderError } = await supabase
+    .from('orders')
+    .insert({
+      baker_id:             baker.id,
+      customer_id:          customerId,
+      design_snapshot:      designSnapshot,
+      design_thumbnail_url: thumbnailUrl,
+      weight_kg:            weightKg ?? null,
+      flavours:             flavours ?? null,
+      special_instructions: specialInstructions ?? null,
+      delivery_date:        deliveryDate ?? null,
+      delivery_time:        deliveryTime ?? null,
+      delivery_mode:        deliveryMode,
+      delivery_address:     deliveryAddress ?? null,
+      // status defaults to 'requested' (DB default) — both the customer request and
+      // the baker walk-in start in the same place; the baker advances it from there.
+    })
+    .select('id, created_at')
+    .single();
+
+  if (orderError) throw new Error(orderError.message);
+
+  // Seed version 1 of the design (append-only history starts here).
+  await appendDesignVersion({ orderId: order.id, designSnapshot, thumbnailKey: thumbnailUrl, authoredBy });
+
+  // Insert notifications and enqueue — fire and forget, non-blocking
+  notifyOrderPlaced({
+    order: { ...order, delivery_date: deliveryDate, delivery_time: deliveryTime, delivery_mode: deliveryMode, delivery_address: deliveryAddress, weight_kg: weightKg, flavours, special_instructions: specialInstructions, design_thumbnail_url: toPublicUrl(thumbnailUrl) },
+    baker,
+    customer: customerContact,
+  }).catch(err => console.error('[notifications] failed:', err.message));
+
+  return order;
+}
+
+// Append a new design version (append-only history) and advance the order's current
+// pointer + denormalized snapshot mirror. Used on order create (v1) and on every
+// subsequent design edit (customer or baker). The UNIQUE(order_id, version_no)
+// constraint is the integrity backstop if two edits race for the same number.
+async function appendDesignVersion({ orderId, designSnapshot, thumbnailKey = null, authoredBy }) {
+  const { data: last } = await supabase
+    .from('order_design_versions')
+    .select('version_no')
+    .eq('order_id', orderId)
+    .order('version_no', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const nextNo = (last?.version_no ?? 0) + 1;
+
+  const { data: version, error: vErr } = await supabase
+    .from('order_design_versions')
+    .insert({
+      order_id:             orderId,
+      version_no:           nextNo,
+      design_snapshot:      designSnapshot,
+      design_thumbnail_url: thumbnailKey,
+      authored_by:          authoredBy,
+    })
+    .select('id, version_no')
+    .single();
+  if (vErr) throw new Error(vErr.message);
+
+  const { error: uErr } = await supabase
+    .from('orders')
+    .update({ current_version_id: version.id, design_snapshot: designSnapshot, design_thumbnail_url: thumbnailKey })
+    .eq('id', orderId);
+  if (uErr) throw new Error(uErr.message);
+
+  return version;
 }
 
 const router = Router();
@@ -77,31 +179,14 @@ router.get('/flavours', async (req, res) => {
 
 router.post('/orders', async (req, res) => {
   try {
-    const {
-      bakerSlug,
-      customer,
-      designSnapshot,
-      designThumbnailKey,
-      weightKg,
-      flavours,
-      specialInstructions,
-      deliveryDate,
-      deliveryTime,
-      deliveryMode = 'pickup',
-      deliveryAddress,
-    } = req.body;
+    const { bakerSlug, customer } = req.body;
 
     // ── Validate required fields ────────────────────────────────────────────
     if (!bakerSlug)                         return res.status(400).json({ error: 'bakerSlug is required' });
     if (!customer?.firstName)               return res.status(400).json({ error: 'customer.firstName is required' });
     if (!customer?.phone && !customer?.email) return res.status(400).json({ error: 'customer.phone or customer.email is required' });
-    if (!designSnapshot)                    return res.status(400).json({ error: 'designSnapshot is required' });
-    if (!['pickup', 'home_delivery'].includes(deliveryMode)) {
-      return res.status(400).json({ error: 'deliveryMode must be pickup or home_delivery' });
-    }
-    if (deliveryMode === 'home_delivery' && !deliveryAddress) {
-      return res.status(400).json({ error: 'deliveryAddress is required for home_delivery' });
-    }
+    const bodyErr = validateOrderBody(req.body);
+    if (bodyErr) return res.status(400).json({ error: bodyErr });
 
     // ── Resolve baker ───────────────────────────────────────────────────────
     const { data: baker, error: bakerError } = await supabase
@@ -148,42 +233,68 @@ router.post('/orders', async (req, res) => {
       existingCustomer = newCustomer;
     }
 
-    // Store the R2 key; toPublicUrl is applied on fetch
-    const thumbnailUrl = designThumbnailKey ?? null;
-
-    // ── Insert order ────────────────────────────────────────────────────────
-    const { data: order, error: orderError } = await supabase
-      .from('orders')
-      .insert({
-        baker_id:             bakerId,
-        customer_id:          existingCustomer.id,
-        design_snapshot:      designSnapshot,
-        design_thumbnail_url: thumbnailUrl,
-        weight_kg:            weightKg ?? null,
-        flavours:             flavours ?? null,
-        special_instructions: specialInstructions ?? null,
-        delivery_date:        deliveryDate ?? null,
-        delivery_time:        deliveryTime ?? null,
-        delivery_mode:        deliveryMode,
-        delivery_address:     deliveryAddress ?? null,
-        status:               'pending',
-      })
-      .select('id, created_at')
-      .single();
-
-    if (orderError) return res.status(500).json({ error: orderError.message });
-
-    // Insert notifications and enqueue — fire and forget, non-blocking
-    notifyOrderPlaced({
-      order: { ...order, delivery_date: deliveryDate, delivery_time: deliveryTime, delivery_mode: deliveryMode, delivery_address: deliveryAddress, weight_kg: weightKg, flavours, special_instructions: specialInstructions, design_thumbnail_url: toPublicUrl(thumbnailUrl) },
+    const order = await insertOrderAndNotify({
       baker,
-      customer: { first_name: customer.firstName, last_name: customer.lastName, email: emailNorm, phone: phoneNorm },
-    }).catch(err => console.error('[notifications] failed:', err.message));
-
-    res.status(201).json({
-      orderId:   order.id,
-      createdAt: order.created_at,
+      customerId:      existingCustomer.id,
+      customerContact: { first_name: customer.firstName, last_name: customer.lastName, email: emailNorm, phone: phoneNorm },
+      body:            req.body,
     });
+
+    res.status(201).json({ orderId: order.id, createdAt: order.created_at });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── POST /api/customer/orders ─────────────────────────────────────────────────
+// Authenticated customer order (the storefront path). The customer is derived
+// FROM THE SESSION TOKEN (req.user → customers.auth_user_id), scoped to the
+// baker's storefront slug. Any customer identity in the body is IGNORED — a
+// logged-in customer can only ever place an order as themselves. This is the
+// route that lets the storefront skip the customer-search step entirely.
+//
+// Body: bakerSlug (required) + the same design/delivery fields as POST /orders.
+// NO customer object is read from the body.
+router.post('/customer/orders', requireAuth, async (req, res) => {
+  try {
+    const { bakerSlug } = req.body;
+    if (!bakerSlug) return res.status(400).json({ error: 'bakerSlug is required' });
+
+    const bodyErr = validateOrderBody(req.body);
+    if (bodyErr) return res.status(400).json({ error: bodyErr });
+
+    // ── Resolve baker ───────────────────────────────────────────────────────
+    const { data: baker, error: bakerError } = await supabase
+      .from('bakers')
+      .select('id, name, email')
+      .eq('slug', bakerSlug)
+      .eq('is_active', true)
+      .maybeSingle();
+    if (bakerError) return res.status(500).json({ error: bakerError.message });
+    if (!baker)     return res.status(404).json({ error: 'Baker not found' });
+
+    // ── Resolve the customer FROM THE TOKEN, scoped to this baker ────────────
+    // No bound customer row for (this baker, this auth user) → the caller isn't a
+    // customer of this baker (never invited / never OTP-bound) → forbidden.
+    const { data: customer, error: custErr } = await supabase
+      .from('customers')
+      .select('id, first_name, last_name, email, phone, is_active')
+      .eq('baker_id', baker.id)
+      .eq('auth_user_id', req.user.id)
+      .maybeSingle();
+    if (custErr) return res.status(500).json({ error: custErr.message });
+    if (!customer || customer.is_active === false) {
+      return res.status(403).json({ error: 'Not a customer of this baker' });
+    }
+
+    const order = await insertOrderAndNotify({
+      baker,
+      customerId:      customer.id,
+      customerContact: { first_name: customer.first_name, last_name: customer.last_name, email: customer.email, phone: customer.phone },
+      body:            req.body,
+    });
+
+    res.status(201).json({ orderId: order.id, createdAt: order.created_at });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -213,6 +324,7 @@ router.get('/orders', requireAuth, requireCapability('order:view'), async (req, 
         delivery_mode, delivery_address, flavours,
         special_instructions, design_thumbnail_url, design_snapshot,
         approved_at, created_at, updated_at,
+        quoted_price, quote_valid_until, current_version_id, quoted_version_id,
         customers ( id, email, first_name, last_name, phone )
       `)
       .eq('baker_id', appUser.baker_id)
@@ -227,7 +339,7 @@ router.get('/orders', requireAuth, requireCapability('order:view'), async (req, 
     const { data, error } = await query;
     if (error) return res.status(500).json({ error: error.message });
 
-    res.json(data.map(o => ({ ...o, design_thumbnail_url: toPublicUrl(o.design_thumbnail_url) })));
+    res.json(data.map(o => ({ ...o, design_thumbnail_url: toPublicUrl(o.design_thumbnail_url), quote_stale: quoteStale(o) })));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -259,7 +371,19 @@ router.get('/orders/:id', requireAuth, requireCapability('order:view'), async (r
     if (error)  return res.status(500).json({ error: error.message });
     if (!order) return res.status(404).json({ error: 'Order not found' });
 
-    res.json(order);
+    res.json({ ...order, quote_stale: quoteStale(order) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── GET /api/order-statuses ───────────────────────────────────────────────────
+// The canonical lifecycle (label/phase/order/tone), served from the DB table so
+// the baker UI and the customer "your quote" view render the same statuses we
+// store — instead of each repo hardcoding its own copy.
+router.get('/order-statuses', async (req, res) => {
+  try {
+    res.json(await getOrderStatuses());
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -267,13 +391,14 @@ router.get('/orders/:id', requireAuth, requireCapability('order:view'), async (r
 
 // ── PATCH /api/orders/:id/status ──────────────────────────────────────────────
 
-const VALID_STATUSES = ['pending', 'approved', 'in_progress', 'ready', 'delivered', 'cancelled'];
-
 router.patch('/orders/:id/status', requireAuth, requireCapability('order:manage'), async (req, res) => {
   try {
     const { status, comment } = req.body;
-    if (!VALID_STATUSES.includes(status)) {
-      return res.status(400).json({ error: `status must be one of: ${VALID_STATUSES.join(', ')}` });
+    // Valid targets come from the order_statuses table (the source of truth), not a
+    // hardcoded array — add/retire a status by editing the table.
+    const validKeys = await getValidStatusKeys();
+    if (!validKeys.includes(status)) {
+      return res.status(400).json({ error: `status must be one of: ${validKeys.join(', ')}` });
     }
 
     const { data: appUser } = await supabase
@@ -282,15 +407,23 @@ router.patch('/orders/:id/status', requireAuth, requireCapability('order:manage'
     if (!appUser) return res.status(403).json({ error: 'Not a baker account' });
 
     const { data: existing } = await supabase
-      .from('orders').select('status').eq('id', req.params.id).eq('baker_id', appUser.baker_id).maybeSingle();
+      .from('orders').select('status, current_version_id').eq('id', req.params.id).eq('baker_id', appUser.baker_id).maybeSingle();
     if (!existing) return res.status(404).json({ error: 'Order not found' });
 
     const updates = { status };
-    if (status === 'approved') { updates.approved_at = new Date().toISOString(); updates.approved_by = appUser.id; }
+    // Stamp lifecycle milestones. 'confirmed' is the new 'approved' (customer
+    // accepted); 'quoted' records when the baker issued the price + pins the quote
+    // to the design version it priced (later edits make quoted_version_id != current
+    // → the quote is stale and must be re-affirmed or re-quoted).
+    if (status === 'confirmed') { updates.approved_at = new Date().toISOString(); updates.approved_by = appUser.id; }
+    if (status === 'quoted') {
+      if (!updates.priced_at) updates.priced_at = new Date().toISOString();
+      updates.quoted_version_id = existing.current_version_id;
+    }
 
     const { data: order, error } = await supabase
       .from('orders').update(updates).eq('id', req.params.id).eq('baker_id', appUser.baker_id)
-      .select('id, status, approved_at').maybeSingle();
+      .select('id, status, approved_at, priced_at, quoted_version_id, current_version_id').maybeSingle();
     if (error) return res.status(500).json({ error: error.message });
 
     await supabase.from('order_audit_log').insert({
@@ -310,6 +443,10 @@ router.patch('/orders/:id/status', requireAuth, requireCapability('order:manage'
 // Edit order details. Requires a comment explaining the change.
 
 const EDITABLE_FIELDS = ['weight_kg', 'delivery_date', 'delivery_time', 'delivery_mode', 'delivery_address', 'special_instructions', 'flavours'];
+// After 'confirmed' the design is locked, but delivery LOGISTICS stay editable —
+// changing where/when it's delivered doesn't touch the cake or the agreed price.
+// (weight_kg / flavours are price-bearing → locked with the design.)
+const LOGISTICS_FIELDS = ['delivery_date', 'delivery_time', 'delivery_mode', 'delivery_address'];
 
 router.patch('/orders/:id', requireAuth, requireCapability('order:manage'), async (req, res) => {
   try {
@@ -322,9 +459,16 @@ router.patch('/orders/:id', requireAuth, requireCapability('order:manage'), asyn
     if (!appUser) return res.status(403).json({ error: 'Not a baker account' });
 
     const { data: existing } = await supabase
-      .from('orders').select(EDITABLE_FIELDS.join(', '))
+      .from('orders').select(['status', ...EDITABLE_FIELDS].join(', '))
       .eq('id', req.params.id).eq('baker_id', appUser.baker_id).maybeSingle();
     if (!existing) return res.status(404).json({ error: 'Order not found' });
+
+    // Once locked (past the quote phase), only delivery logistics may change.
+    const allowedFields = (await isQuotePhase(existing.status)) ? EDITABLE_FIELDS : LOGISTICS_FIELDS;
+    const disallowed = Object.keys(fields).filter(f => EDITABLE_FIELDS.includes(f) && !allowedFields.includes(f));
+    if (disallowed.length) {
+      return res.status(409).json({ error: `Once the order is confirmed, only delivery details can be changed (not: ${disallowed.join(', ')}).` });
+    }
 
     // Sanitize: empty strings → null; weight_kg → number or null;
     // flavours → array (jsonb) or null, keeping only entries with a name.
@@ -341,7 +485,7 @@ router.patch('/orders/:id', requireAuth, requireCapability('order:manage'), asyn
 
     const updates = {};
     const changes = {};
-    for (const f of EDITABLE_FIELDS) {
+    for (const f of allowedFields) {
       if (!(f in fields)) continue;
       const sanitized = sanitize(f, fields[f]);
       const existing_val = existing[f] ?? null;
@@ -377,7 +521,11 @@ router.patch('/orders/:id', requireAuth, requireCapability('order:manage'), asyn
 });
 
 // ── PATCH /api/orders/:id/design ─────────────────────────────────────────────
-// Updates the 3D design snapshot + thumbnail. Requires a comment.
+// Baker edits the 3D design (the shared-pen window). Appends a new design VERSION
+// (never overwrites), advances the current pointer, and emails the customer that
+// the baker has recommendations / an update. Rejected once the design is locked
+// (status past the quote phase — i.e. confirmed onward → cancel + recreate).
+// Requires a comment.
 
 router.patch('/orders/:id/design', requireAuth, requireCapability('order:manage'), async (req, res) => {
   try {
@@ -390,29 +538,67 @@ router.patch('/orders/:id/design', requireAuth, requireCapability('order:manage'
       .eq('auth_user_id', req.user.id).maybeSingle();
     if (!appUser) return res.status(403).json({ error: 'Not a baker account' });
 
+    // Pull status + baker/customer contact (for the lock guard + customer email).
     const { data: existing } = await supabase
-      .from('orders').select('id').eq('id', req.params.id).eq('baker_id', appUser.baker_id).maybeSingle();
+      .from('orders')
+      .select('id, status, bakers(name, slug), customers(email, first_name, last_name)')
+      .eq('id', req.params.id).eq('baker_id', appUser.baker_id).maybeSingle();
     if (!existing) return res.status(404).json({ error: 'Order not found' });
 
-    const updates = { design_snapshot: designSnapshot };
-    if (designThumbnailKey) {
-      updates.design_thumbnail_url = designThumbnailKey;
+    // Design lock: editable only during the quote phase (initiated/requested/quoted).
+    if (!(await isQuotePhase(existing.status))) {
+      return res.status(409).json({ error: 'The design is locked once the order is confirmed. Cancel and recreate to change the cake.' });
     }
 
-    const { data: order, error } = await supabase
-      .from('orders').update(updates).eq('id', req.params.id).eq('baker_id', appUser.baker_id)
-      .select('id, design_thumbnail_url').maybeSingle();
-    if (error) return res.status(500).json({ error: `Update failed: ${error.message}` });
+    // Append a new version (baker-authored) + advance the current pointer/mirror.
+    // The quote (if any) auto-goes stale: quoted_version_id no longer == current.
+    const thumbnailKey = designThumbnailKey ?? null;
+    const version = await appendDesignVersion({
+      orderId: req.params.id, designSnapshot, thumbnailKey, authoredBy: 'baker',
+    });
 
     const { error: auditError } = await supabase.from('order_audit_log').insert({
       order_id: req.params.id, baker_id: appUser.baker_id,
       event: 'design_updated', comment: comment.trim(),
-      changes: { design_snapshot: { from: null, to: 'updated' } },
+      changes: { design_version: { to: version.version_no } },
       changed_by_name: `${appUser.first_name ?? ''} ${appUser.last_name ?? ''}`.trim() || req.user.email,
     });
     if (auditError) console.error('Audit log insert failed:', auditError.message);
 
-    res.json({ orderId: req.params.id, designThumbnailUrl: toPublicUrl(order.design_thumbnail_url) });
+    // Email the customer: recommendations (still pre-quote) vs updated (after a quote).
+    notifyDesignUpdated({
+      order:    { id: req.params.id, design_thumbnail_url: toPublicUrl(thumbnailKey) },
+      baker:    existing.bakers ?? {},
+      customer: existing.customers ?? {},
+      mode:     existing.status === 'quoted' ? 'updated' : 'recommendations',
+    }).catch(err => console.error('[notifications] design update failed:', err.message));
+
+    res.json({ orderId: req.params.id, versionNo: version.version_no, designThumbnailUrl: toPublicUrl(thumbnailKey) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── GET /api/orders/:id/versions ──────────────────────────────────────────────
+// The design's append-only version history (newest first).
+router.get('/orders/:id/versions', requireAuth, requireCapability('order:view'), async (req, res) => {
+  try {
+    const { data: appUser } = await supabase
+      .from('baker_appusers').select('baker_id').eq('auth_user_id', req.user.id).maybeSingle();
+    if (!appUser) return res.status(403).json({ error: 'Not a baker account' });
+
+    const { data: order } = await supabase
+      .from('orders').select('id').eq('id', req.params.id).eq('baker_id', appUser.baker_id).maybeSingle();
+    if (!order) return res.status(404).json({ error: 'Order not found' });
+
+    const { data, error } = await supabase
+      .from('order_design_versions')
+      .select('id, version_no, design_thumbnail_url, authored_by, created_at')
+      .eq('order_id', req.params.id)
+      .order('version_no', { ascending: false });
+    if (error) return res.status(500).json({ error: error.message });
+
+    res.json((data ?? []).map(v => ({ ...v, design_thumbnail_url: toPublicUrl(v.design_thumbnail_url) })));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

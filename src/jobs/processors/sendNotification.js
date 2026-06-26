@@ -54,7 +54,7 @@ function buildEmail(typeSlug, recipientEmail, payload) {
       to:      recipientEmail,
       subject: `New Order — ${p.customerName}`,
       html: `<div style="font-family:sans-serif;max-width:560px;margin:0 auto">
-        <h2 style="color:#2C4433">New Order Received 🎂</h2>
+        <h2 style="color:#2C4433">New Order Received</h2>
         <p>You have a new cake order from <b>${p.customerName}</b>.</p>
         ${thumbnailHtml}
         ${orderDetailsHtml(p)}
@@ -91,7 +91,7 @@ function buildEmail(typeSlug, recipientEmail, payload) {
         ? `${p.bakerName} has design ideas for your cake`
         : `${p.bakerName} updated your cake design`,
       html: `<div style="font-family:sans-serif;max-width:560px;margin:0 auto">
-        <h2 style="color:#2C4433">${isReco ? 'A few ideas for your cake 🎨' : 'Your design was updated 🎂'}</h2>
+        <h2 style="color:#2C4433">${isReco ? 'A few ideas for your cake' : 'Your design was updated'}</h2>
         <p>Hi ${p.customerFirstName}, <b>${p.bakerName}</b> ${isReco
           ? 'has suggested some changes to your cake design'
           : 'has updated your cake design'}. Open the designer to take a look — you can keep refining it yourself.</p>
@@ -103,9 +103,10 @@ function buildEmail(typeSlug, recipientEmail, payload) {
   }
 
   if (typeSlug === 'quote_issued_customer') {
-    const link = p.bakerSlug
-      ? config.storefront.urlTemplate.replace('{slug}', p.bakerSlug)
-      : null;
+    // Deep-link to the customer's quote summary screen (review + accept), not the
+    // storefront root.
+    const base = p.bakerSlug ? config.storefront.urlTemplate.replace('{slug}', p.bakerSlug) : null;
+    const link = base && p.orderId ? `${base.replace(/\/+$/, '')}/orders/${p.orderId}` : base;
     const priceLine = p.quotedPrice != null ? `Your quote: <b>₹${p.quotedPrice}</b>` : "Your quote is ready";
     const validLine = p.quoteValidUntil
       ? `<p style="color:#888;font-size:13px">Valid until ${formatDate(p.quoteValidUntil)}.</p>`
@@ -115,7 +116,7 @@ function buildEmail(typeSlug, recipientEmail, payload) {
       to:      recipientEmail,
       subject: `${p.bakerName} sent you a quote`,
       html: `<div style="font-family:sans-serif;max-width:560px;margin:0 auto">
-        <h2 style="color:#2C4433">Your quote is ready 🎂</h2>
+        <h2 style="color:#2C4433">Your quote is ready</h2>
         <p>Hi ${p.customerFirstName}, <b>${p.bakerName}</b> has priced your cake.</p>
         <p style="font-size:16px">${priceLine}</p>
         ${validLine}
@@ -131,7 +132,7 @@ function buildEmail(typeSlug, recipientEmail, payload) {
       to:      recipientEmail,
       subject: `Quote accepted — ${p.customerName || 'a customer'}`,
       html: `<div style="font-family:sans-serif;max-width:560px;margin:0 auto">
-        <h2 style="color:#2C4433">Quote accepted ✅</h2>
+        <h2 style="color:#2C4433">Quote accepted</h2>
         <p><b>${p.customerName || 'A customer'}</b> accepted your quote${p.finalPrice != null ? ` of <b>₹${p.finalPrice}</b>` : ''}. The order is now confirmed.</p>
         <p style="margin-top:24px;color:#888;font-size:12px">Open your Spattoo dashboard to start production.</p>
       </div>`,

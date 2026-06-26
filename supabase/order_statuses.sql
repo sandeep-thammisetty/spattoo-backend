@@ -68,6 +68,21 @@ DELETE FROM order_statuses WHERE key IN ('in_progress', 'delivered');
 -- Default new orders to 'requested' (customer request / order placed, awaiting baker).
 ALTER TABLE orders ALTER COLUMN status SET DEFAULT 'requested';
 
+-- Fail loudly (naming the offenders) if any order still holds a status not in the
+-- lookup — so the FK add below can't fail with a vague "violates foreign key" error.
+-- If this fires, add the missing key to the seed above, or a backfill UPDATE for it.
+DO $$
+DECLARE orphans text;
+BEGIN
+  SELECT string_agg(DISTINCT o.status, ', ') INTO orphans
+  FROM orders o
+  WHERE o.status IS NOT NULL
+    AND NOT EXISTS (SELECT 1 FROM order_statuses s WHERE s.key = o.status);
+  IF orphans IS NOT NULL THEN
+    RAISE EXCEPTION 'orders.status has values not in order_statuses: %', orphans;
+  END IF;
+END $$;
+
 -- Add the FK once (ADD CONSTRAINT has no IF NOT EXISTS — guard it).
 DO $$
 BEGIN

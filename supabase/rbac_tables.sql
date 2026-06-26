@@ -60,8 +60,8 @@ ON CONFLICT (key) DO NOTHING;
 
 -- ── 3. role_capabilities (the editable matrix) ────────────────────────────────
 CREATE TABLE IF NOT EXISTS role_capabilities (
-  role_key       text NOT NULL REFERENCES roles(key)        ON DELETE CASCADE,
-  capability_key text NOT NULL REFERENCES capabilities(key) ON DELETE CASCADE,
+  role_key       text NOT NULL REFERENCES roles(key)        ON DELETE CASCADE,  -- scale-ok: bounded RBAC matrix (roles × capabilities), never grows with business
+  capability_key text NOT NULL REFERENCES capabilities(key) ON DELETE CASCADE,  -- scale-ok: bounded RBAC matrix
   PRIMARY KEY (role_key, capability_key)
 );
 
@@ -99,7 +99,7 @@ ON CONFLICT (role_key, capability_key) DO NOTHING;
 -- A Supabase user is an admin ONLY if they appear here.
 CREATE TABLE IF NOT EXISTS admins (
   auth_user_id uuid PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
-  role         text NOT NULL DEFAULT 'admin_staff'
+  role         text NOT NULL DEFAULT 'admin_staff'  -- scale-ok: admins is platform staff only (a handful of rows, ever)
                  REFERENCES roles(key)
                  CHECK (role IN ('admin', 'admin_staff')),
   email        text,

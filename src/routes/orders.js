@@ -4,11 +4,21 @@ import { requireAuth } from '../middleware/auth.js';
 import { requireCapability } from '../middleware/rbac.js';
 import { config } from '../config.js';
 import { notifyOrderPlaced, notifyDesignUpdated, notifyQuoteIssued, notifyQuoteAccepted } from '../services/notifications.js';
-import { getOrderStatuses, getValidStatusKeys, isQuotePhase } from '../lib/orderStatuses.js';
+import { getOrderStatuses, getValidStatusKeys, isQuotePhase, idForKey } from '../lib/orderStatuses.js';
 
 function toPublicUrl(key) {
   if (!key) return null;
   return `${config.r2.publicUrl}/${key}`;
+}
+
+// orders stores the compact `status_id`; reads embed `order_statuses ( key )`. This
+// flattens a read row back to a readable `status` key for the HTTP response + route
+// code, dropping the surrogate so callers never see ids. (Writes go the other way via
+// idForKey.) Tolerates an already-flattened row (keeps its `status`).
+function withStatusKey(row) {
+  if (!row) return row;
+  const { order_statuses, status_id, ...rest } = row;
+  return { ...rest, status: order_statuses?.key ?? rest.status ?? null };
 }
 
 // A quote is "stale" when a design version exists past the one it priced — i.e. the
@@ -20,7 +30,7 @@ function quoteStale(order) {
 // Customer-facing order shape — everything the customer may see, NEVER the internal
 // suggested_price. Includes design_snapshot so they can re-open/refine.
 const CUSTOMER_ORDER_FIELDS = `
-  id, status, quoted_price, quote_line_items, quote_valid_until, final_price,
+  id, status_id, order_statuses ( key ), quoted_price, quote_line_items, quote_valid_until, final_price,
   weight_kg, flavours, special_instructions,
   delivery_date, delivery_time, delivery_mode, delivery_address,
   design_thumbnail_url, design_snapshot, current_version_id, quoted_version_id,
@@ -29,9 +39,10 @@ const CUSTOMER_ORDER_FIELDS = `
 `;
 
 function toCustomerOrder(o) {
-  const { baker_id, customer_id, bakers, ...rest } = o;
+  const { baker_id, customer_id, bakers, order_statuses, status_id, ...rest } = o;
   return {
     ...rest,
+    status:               order_statuses?.key ?? rest.status ?? null,
     baker_name:           bakers?.name ?? null,
     design_thumbnail_url: toPublicUrl(o.design_thumbnail_url),
     quote_stale:          quoteStale(o),
@@ -51,7 +62,8 @@ async function loadCustomerOrder(authUserId, orderId) {
     .eq('id', order.customer_id).eq('auth_user_id', authUserId).maybeSingle();
   if (!customer) return { status: 403, error: 'Not your order' };
 
-  return { order };
+  // Flatten status_id → readable `status` key so the route checks (order.status) work.
+  return { order: withStatusKey(order) };
 }
 
 // Shared validation for the design + delivery part of an order body. Customer
@@ -92,8 +104,10 @@ async function insertOrderAndNotify({ baker, customerId, customerContact, body, 
       delivery_time:        deliveryTime ?? null,
       delivery_mode:        deliveryMode,
       delivery_address:     deliveryAddress ?? null,
-      // status defaults to 'requested' (DB default) — both the customer request and
-      // the baker walk-in start in the same place; the baker advances it from there.
+      // Both the customer request and the baker walk-in start at 'requested'; the
+      // baker advances from there. (status_id is a surrogate FK — set it explicitly,
+      // there's no literal DB default for it.)
+      status_id:            await idForKey('requested'),
     })
     .select('id, created_at')
     .single();
@@ -391,7 +405,7 @@ router.post('/customer/orders/:id/accept', requireAuth, async (req, res) => {
 
     const { data: updated, error: uErr } = await supabase
       .from('orders')
-      .update({ status: 'confirmed', final_price: order.quoted_price, approved_at: new Date().toISOString() })
+      .update({ status_id: await idForKey('confirmed'), final_price: order.quoted_price, approved_at: new Date().toISOString() })
       .eq('id', order.id)
       .select(CUSTOMER_ORDER_FIELDS)
       .maybeSingle();
@@ -430,7 +444,7 @@ router.post('/customer/orders/:id/decline', requireAuth, async (req, res) => {
     }
 
     const { data: updated, error: uErr } = await supabase
-      .from('orders').update({ status: 'cancelled' })
+      .from('orders').update({ status_id: await idForKey('cancelled') })
       .eq('id', order.id).select(CUSTOMER_ORDER_FIELDS).maybeSingle();
     if (uErr) return res.status(500).json({ error: uErr.message });
 
@@ -467,7 +481,7 @@ router.get('/orders', requireAuth, requireCapability('order:view'), async (req, 
     let query = supabase
       .from('orders')
       .select(`
-        id, status, weight_kg, delivery_date, delivery_time,
+        id, status_id, order_statuses ( key ), weight_kg, delivery_date, delivery_time,
         delivery_mode, delivery_address, flavours,
         special_instructions, design_thumbnail_url, design_snapshot,
         approved_at, created_at, updated_at,
@@ -477,7 +491,7 @@ router.get('/orders', requireAuth, requireCapability('order:view'), async (req, 
       .eq('baker_id', appUser.baker_id)
       .order('created_at', { ascending: false });
 
-    if (status)               query = query.eq('status', status);
+    if (status)               query = query.eq('status_id', await idForKey(status));
     if (from)                 query = query.gte('created_at', from);
     if (to)                   query = query.lte('created_at', to);
     if (req.query.delivery_date) query = query.eq('delivery_date', req.query.delivery_date);
@@ -486,7 +500,7 @@ router.get('/orders', requireAuth, requireCapability('order:view'), async (req, 
     const { data, error } = await query;
     if (error) return res.status(500).json({ error: error.message });
 
-    res.json(data.map(o => ({ ...o, design_thumbnail_url: toPublicUrl(o.design_thumbnail_url), quote_stale: quoteStale(o) })));
+    res.json(data.map(o => ({ ...withStatusKey(o), design_thumbnail_url: toPublicUrl(o.design_thumbnail_url), quote_stale: quoteStale(o) })));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -509,6 +523,7 @@ router.get('/orders/:id', requireAuth, requireCapability('order:view'), async (r
       .from('orders')
       .select(`
         *,
+        order_statuses ( key ),
         customers ( id, email, first_name, last_name, phone )
       `)
       .eq('id', req.params.id)
@@ -518,7 +533,7 @@ router.get('/orders/:id', requireAuth, requireCapability('order:view'), async (r
     if (error)  return res.status(500).json({ error: error.message });
     if (!order) return res.status(404).json({ error: 'Order not found' });
 
-    res.json({ ...order, quote_stale: quoteStale(order) });
+    res.json({ ...withStatusKey(order), quote_stale: quoteStale(order) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -553,11 +568,12 @@ router.patch('/orders/:id/status', requireAuth, requireCapability('order:manage'
       .eq('auth_user_id', req.user.id).maybeSingle();
     if (!appUser) return res.status(403).json({ error: 'Not a baker account' });
 
-    const { data: existing } = await supabase
-      .from('orders').select('status, current_version_id').eq('id', req.params.id).eq('baker_id', appUser.baker_id).maybeSingle();
-    if (!existing) return res.status(404).json({ error: 'Order not found' });
+    const { data: existingRow } = await supabase
+      .from('orders').select('status_id, current_version_id, order_statuses ( key )').eq('id', req.params.id).eq('baker_id', appUser.baker_id).maybeSingle();
+    if (!existingRow) return res.status(404).json({ error: 'Order not found' });
+    const existing = withStatusKey(existingRow);
 
-    const updates = { status };
+    const updates = { status_id: await idForKey(status) };
     // Stamp lifecycle milestones. 'confirmed' is the new 'approved' (customer
     // accepted); 'quoted' records when the baker issued the price + pins the quote
     // to the design version it priced (later edits make quoted_version_id != current
@@ -570,7 +586,7 @@ router.patch('/orders/:id/status', requireAuth, requireCapability('order:manage'
 
     const { data: order, error } = await supabase
       .from('orders').update(updates).eq('id', req.params.id).eq('baker_id', appUser.baker_id)
-      .select('id, status, approved_at, priced_at, quoted_version_id, current_version_id').maybeSingle();
+      .select('id, status_id, order_statuses ( key ), approved_at, priced_at, quoted_version_id, current_version_id').maybeSingle();
     if (error) return res.status(500).json({ error: error.message });
 
     await supabase.from('order_audit_log').insert({
@@ -580,7 +596,7 @@ router.patch('/orders/:id/status', requireAuth, requireCapability('order:manage'
       changed_by_name: `${appUser.first_name ?? ''} ${appUser.last_name ?? ''}`.trim() || req.user.email,
     });
 
-    res.json(order);
+    res.json(withStatusKey(order));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -604,11 +620,12 @@ router.post('/orders/:id/quote', requireAuth, requireCapability('order:manage'),
       .eq('auth_user_id', req.user.id).maybeSingle();
     if (!appUser) return res.status(403).json({ error: 'Not a baker account' });
 
-    const { data: existing } = await supabase
+    const { data: existingRow } = await supabase
       .from('orders')
-      .select('status, current_version_id, bakers(name, slug), customers(email, first_name)')
+      .select('status_id, current_version_id, order_statuses ( key ), bakers(name, slug), customers(email, first_name)')
       .eq('id', req.params.id).eq('baker_id', appUser.baker_id).maybeSingle();
-    if (!existing) return res.status(404).json({ error: 'Order not found' });
+    if (!existingRow) return res.status(404).json({ error: 'Order not found' });
+    const existing = withStatusKey(existingRow);
 
     // Quote only before the order is confirmed (design still open).
     if (!(await isQuotePhase(existing.status))) {
@@ -622,11 +639,11 @@ router.post('/orders/:id/quote', requireAuth, requireCapability('order:manage'),
         quote_line_items:  Array.isArray(lineItems) ? lineItems : null,
         quote_valid_until: validUntil ?? null,
         priced_at:         new Date().toISOString(),
-        status:            'quoted',
+        status_id:         await idForKey('quoted'),
         quoted_version_id: existing.current_version_id,   // pin to the priced design
       })
       .eq('id', req.params.id).eq('baker_id', appUser.baker_id)
-      .select('id, status, quoted_price, quote_line_items, quote_valid_until, priced_at, quoted_version_id, current_version_id')
+      .select('id, status_id, order_statuses ( key ), quoted_price, quote_line_items, quote_valid_until, priced_at, quoted_version_id, current_version_id')
       .maybeSingle();
     if (error) return res.status(500).json({ error: error.message });
 
@@ -644,7 +661,7 @@ router.post('/orders/:id/quote', requireAuth, requireCapability('order:manage'),
     }).catch(err => console.error('[notifications] quote issued failed:', err.message));
 
     // Freshly pinned to the current version → never stale right after issuing.
-    res.json({ ...order, quote_stale: false });
+    res.json({ ...withStatusKey(order), quote_stale: false });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -669,10 +686,11 @@ router.patch('/orders/:id', requireAuth, requireCapability('order:manage'), asyn
       .eq('auth_user_id', req.user.id).maybeSingle();
     if (!appUser) return res.status(403).json({ error: 'Not a baker account' });
 
-    const { data: existing } = await supabase
-      .from('orders').select(['status', ...EDITABLE_FIELDS].join(', '))
+    const { data: existingRow } = await supabase
+      .from('orders').select(['status_id', 'order_statuses ( key )', ...EDITABLE_FIELDS].join(', '))
       .eq('id', req.params.id).eq('baker_id', appUser.baker_id).maybeSingle();
-    if (!existing) return res.status(404).json({ error: 'Order not found' });
+    if (!existingRow) return res.status(404).json({ error: 'Order not found' });
+    const existing = withStatusKey(existingRow);
 
     // Once locked (past the quote phase), only delivery logistics may change.
     const allowedFields = (await isQuotePhase(existing.status)) ? EDITABLE_FIELDS : LOGISTICS_FIELDS;
@@ -750,11 +768,12 @@ router.patch('/orders/:id/design', requireAuth, requireCapability('order:manage'
     if (!appUser) return res.status(403).json({ error: 'Not a baker account' });
 
     // Pull status + baker/customer contact (for the lock guard + customer email).
-    const { data: existing } = await supabase
+    const { data: existingRow } = await supabase
       .from('orders')
-      .select('id, status, bakers(name, slug), customers(email, first_name, last_name)')
+      .select('id, status_id, order_statuses ( key ), bakers(name, slug), customers(email, first_name, last_name)')
       .eq('id', req.params.id).eq('baker_id', appUser.baker_id).maybeSingle();
-    if (!existing) return res.status(404).json({ error: 'Order not found' });
+    if (!existingRow) return res.status(404).json({ error: 'Order not found' });
+    const existing = withStatusKey(existingRow);
 
     // Design lock: editable only during the quote phase (initiated/requested/quoted).
     if (!(await isQuotePhase(existing.status))) {

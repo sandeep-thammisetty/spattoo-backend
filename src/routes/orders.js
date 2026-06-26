@@ -3,7 +3,7 @@ import { supabase } from '../services/supabase.js';
 import { requireAuth } from '../middleware/auth.js';
 import { requireCapability } from '../middleware/rbac.js';
 import { config } from '../config.js';
-import { notifyOrderPlaced, notifyDesignUpdated, notifyQuoteIssued, notifyQuoteAccepted } from '../services/notifications.js';
+import { notifyOrderPlaced, notifyDesignUpdated, notifyQuoteIssued, notifyQuoteAccepted, notifyQuoteQuestion, notifyOrderConfirmed } from '../services/notifications.js';
 import { getOrderStatuses, getValidStatusKeys, isQuotePhase, idForKey } from '../lib/orderStatuses.js';
 
 function toPublicUrl(key) {
@@ -31,6 +31,7 @@ function quoteStale(order) {
 // suggested_price. Includes design_snapshot so they can re-open/refine.
 const CUSTOMER_ORDER_FIELDS = `
   id, status_id, order_statuses ( key ), quoted_price, quote_line_items, quote_valid_until, final_price,
+  advance_amount, quote_note, advance_paid_at,
   weight_kg, flavours, special_instructions,
   delivery_date, delivery_time, delivery_mode, delivery_address,
   design_thumbnail_url, design_snapshot, current_version_id, quoted_version_id,
@@ -398,14 +399,16 @@ router.post('/customer/orders/:id/accept', requireAuth, async (req, res) => {
   try {
     const { order, status, error } = await loadCustomerOrder(req.user.id, req.params.id);
     if (error) return res.status(status).json({ error });
-    if (order.status !== 'quoted') return res.status(409).json({ error: 'No active quote to accept.' });
+    if (order.status !== 'quoted') return res.status(409).json({ error: 'No active quote to approve.' });
     if (quoteStale(order)) {
       return res.status(409).json({ error: 'The design changed since this quote — ask the baker to re-confirm the price.' });
     }
 
+    // Customer approves the quote → 'quote_approved' (design + price agreed and locked).
+    // The baker confirms separately (after the advance) — that's the 'confirmed' step.
     const { data: updated, error: uErr } = await supabase
       .from('orders')
-      .update({ status_id: await idForKey('confirmed'), final_price: order.quoted_price, approved_at: new Date().toISOString() })
+      .update({ status_id: await idForKey('quote_approved'), final_price: order.quoted_price, approved_at: new Date().toISOString() })
       .eq('id', order.id)
       .select(CUSTOMER_ORDER_FIELDS)
       .maybeSingle();
@@ -413,12 +416,12 @@ router.post('/customer/orders/:id/accept', requireAuth, async (req, res) => {
 
     await supabase.from('order_audit_log').insert({
       order_id: order.id, baker_id: order.baker_id,
-      event: 'quote_accepted',
-      changes: { status: { from: 'quoted', to: 'confirmed' } },
+      event: 'quote_approved',
+      changes: { status: { from: 'quoted', to: 'quote_approved' } },
       changed_by_name: 'Customer',
     });
 
-    // Notify the baker that the customer accepted.
+    // Notify the baker that the customer approved (so they can collect the advance + confirm).
     const [{ data: baker }, { data: cust }] = await Promise.all([
       supabase.from('bakers').select('id, name, email').eq('id', order.baker_id).maybeSingle(),
       supabase.from('customers').select('first_name, last_name').eq('id', order.customer_id).maybeSingle(),
@@ -439,8 +442,11 @@ router.post('/customer/orders/:id/decline', requireAuth, async (req, res) => {
   try {
     const { order, status, error } = await loadCustomerOrder(req.user.id, req.params.id);
     if (error) return res.status(status).json({ error });
-    if (!(await isQuotePhase(order.status))) {
-      return res.status(409).json({ error: 'This order can no longer be declined.' });
+    // Cancellable while in the quote phase OR after approving but before the baker
+    // confirms (no advance committed yet). Once 'confirmed' it's locked.
+    const cancellable = (await isQuotePhase(order.status)) || order.status === 'quote_approved';
+    if (!cancellable) {
+      return res.status(409).json({ error: 'This order can no longer be cancelled.' });
     }
 
     const { data: updated, error: uErr } = await supabase
@@ -456,6 +462,36 @@ router.post('/customer/orders/:id/decline', requireAuth, async (req, res) => {
     });
 
     res.json(toCustomerOrder(updated));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── POST /api/customer/orders/:id/message ─────────────────────────────────────
+// Customer asks the baker a question (the "Talk to {baker}" path on the quote screen).
+// Records the note on the order and notifies the baker — keeps the quote open (the
+// baker replies by revising the quote, or out-of-band via WhatsApp). Not a dead-end.
+router.post('/customer/orders/:id/message', requireAuth, async (req, res) => {
+  try {
+    const { order, status, error } = await loadCustomerOrder(req.user.id, req.params.id);
+    if (error) return res.status(status).json({ error });
+    const message = (req.body?.message ?? '').toString().trim();
+    if (!message) return res.status(400).json({ error: 'message is required' });
+
+    await supabase.from('order_audit_log').insert({
+      order_id: order.id, baker_id: order.baker_id,
+      event: 'customer_message', comment: message,
+      changed_by_name: 'Customer',
+    });
+
+    const [{ data: baker }, { data: cust }] = await Promise.all([
+      supabase.from('bakers').select('id, name, email').eq('id', order.baker_id).maybeSingle(),
+      supabase.from('customers').select('first_name, last_name').eq('id', order.customer_id).maybeSingle(),
+    ]);
+    notifyQuoteQuestion({ order, baker: baker ?? {}, customer: cust ?? {}, message })
+      .catch(err => console.error('[notifications] quote question failed:', err.message));
+
+    res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -574,11 +610,12 @@ router.patch('/orders/:id/status', requireAuth, requireCapability('order:manage'
     const existing = withStatusKey(existingRow);
 
     const updates = { status_id: await idForKey(status) };
-    // Stamp lifecycle milestones. 'confirmed' is the new 'approved' (customer
-    // accepted); 'quoted' records when the baker issued the price + pins the quote
-    // to the design version it priced (later edits make quoted_version_id != current
-    // → the quote is stale and must be re-affirmed or re-quoted).
-    if (status === 'confirmed') { updates.approved_at = new Date().toISOString(); updates.approved_by = appUser.id; }
+    // Stamp lifecycle milestones. 'confirmed' = the BAKER confirms (advance received) —
+    // approved_at was already set when the CUSTOMER approved (quote_approved), so here
+    // we stamp advance_paid_at instead. 'quoted' records when the baker issued the price
+    // + pins the quote to the design version it priced (later edits make quoted_version_id
+    // != current → the quote is stale and must be re-affirmed or re-quoted).
+    if (status === 'confirmed') { updates.advance_paid_at = new Date().toISOString(); updates.approved_by = appUser.id; }
     if (status === 'quoted') {
       if (!updates.priced_at) updates.priced_at = new Date().toISOString();
       updates.quoted_version_id = existing.current_version_id;
@@ -596,6 +633,18 @@ router.patch('/orders/:id/status', requireAuth, requireCapability('order:manage'
       changed_by_name: `${appUser.first_name ?? ''} ${appUser.last_name ?? ''}`.trim() || req.user.email,
     });
 
+    // Baker confirmed → let the customer know the order is locked in.
+    if (status === 'confirmed') {
+      const { data: ctx } = await supabase.from('orders')
+        .select('id, final_price, design_thumbnail_url, bakers(name, slug), customers(email, first_name)')
+        .eq('id', req.params.id).maybeSingle();
+      notifyOrderConfirmed({
+        order:    { id: req.params.id, final_price: ctx?.final_price ?? null, design_thumbnail_url: toPublicUrl(ctx?.design_thumbnail_url) },
+        baker:    ctx?.bakers ?? {},
+        customer: ctx?.customers ?? {},
+      }).catch(err => console.error('[notifications] order confirmed failed:', err.message));
+    }
+
     res.json(withStatusKey(order));
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -609,10 +658,14 @@ router.patch('/orders/:id/status', requireAuth, requireCapability('order:manage'
 // (re-pin to the current version). Rejected once the order is past the quote phase.
 router.post('/orders/:id/quote', requireAuth, requireCapability('order:manage'), async (req, res) => {
   try {
-    const { price, lineItems, validUntil, comment } = req.body;
+    const { price, lineItems, validUntil, comment, advanceAmount, note } = req.body;
     const priceNum = Number(price);
     if (!Number.isFinite(priceNum) || priceNum <= 0) {
       return res.status(400).json({ error: 'price must be a positive number' });
+    }
+    const advanceNum = advanceAmount === '' || advanceAmount == null ? null : Number(advanceAmount);
+    if (advanceNum != null && (!Number.isFinite(advanceNum) || advanceNum < 0 || advanceNum > priceNum)) {
+      return res.status(400).json({ error: 'advanceAmount must be between 0 and the price' });
     }
 
     const { data: appUser } = await supabase
@@ -638,12 +691,14 @@ router.post('/orders/:id/quote', requireAuth, requireCapability('order:manage'),
         quoted_price:      priceNum,
         quote_line_items:  Array.isArray(lineItems) ? lineItems : null,
         quote_valid_until: validUntil ?? null,
+        advance_amount:    advanceNum,
+        quote_note:        (note ?? '').toString().trim() || null,
         priced_at:         new Date().toISOString(),
         status_id:         await idForKey('quoted'),
         quoted_version_id: existing.current_version_id,   // pin to the priced design
       })
       .eq('id', req.params.id).eq('baker_id', appUser.baker_id)
-      .select('id, status_id, order_statuses ( key ), quoted_price, quote_line_items, quote_valid_until, priced_at, quoted_version_id, current_version_id')
+      .select('id, status_id, order_statuses ( key ), quoted_price, quote_line_items, quote_valid_until, advance_amount, quote_note, priced_at, quoted_version_id, current_version_id')
       .maybeSingle();
     if (error) return res.status(500).json({ error: error.message });
 
@@ -655,7 +710,7 @@ router.post('/orders/:id/quote', requireAuth, requireCapability('order:manage'),
     });
 
     notifyQuoteIssued({
-      order:    { id: req.params.id, quoted_price: priceNum, quote_valid_until: validUntil ?? null },
+      order:    { id: req.params.id, quoted_price: priceNum, quote_valid_until: validUntil ?? null, advance_amount: advanceNum, quote_note: (note ?? '').toString().trim() || null },
       baker:    existing.bakers ?? {},
       customer: existing.customers ?? {},
     }).catch(err => console.error('[notifications] quote issued failed:', err.message));

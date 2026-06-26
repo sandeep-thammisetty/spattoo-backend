@@ -108,9 +108,13 @@ function buildEmail(typeSlug, recipientEmail, payload) {
     const base = p.bakerSlug ? config.storefront.urlTemplate.replace('{slug}', p.bakerSlug) : null;
     const link = base && p.orderId ? `${base.replace(/\/+$/, '')}/orders/${p.orderId}` : base;
     const priceLine = p.quotedPrice != null ? `Your quote: <b>₹${p.quotedPrice}</b>` : "Your quote is ready";
+    const advanceLine = p.advanceAmount != null
+      ? `<p style="font-size:14px;color:#444">Advance to confirm: <b>₹${p.advanceAmount}</b></p>` : "";
     const validLine = p.quoteValidUntil
       ? `<p style="color:#888;font-size:13px">Valid until ${formatDate(p.quoteValidUntil)}.</p>`
       : "";
+    const noteLine = p.quoteNote
+      ? `<p style="background:#f6f4ef;border-radius:8px;padding:12px 14px;font-style:italic;color:#444">&ldquo;${p.quoteNote}&rdquo; — ${p.bakerName}</p>` : "";
     return {
       from:    `${p.bakerName} <${rawEmail(config.smtp.from)}>`,
       to:      recipientEmail,
@@ -119,7 +123,9 @@ function buildEmail(typeSlug, recipientEmail, payload) {
         <h2 style="color:#2C4433">Your quote is ready</h2>
         <p>Hi ${p.customerFirstName}, <b>${p.bakerName}</b> has priced your cake.</p>
         <p style="font-size:16px">${priceLine}</p>
+        ${advanceLine}
         ${validLine}
+        ${noteLine}
         ${link ? `<p style="margin-top:24px"><a href="${link}" style="display:inline-block;background:#2C4433;color:#fff;text-decoration:none;padding:12px 28px;border-radius:10px;font-weight:700">Review your quote</a></p>` : ''}
         <p style="color:#888;font-size:12px;margin-top:24px">Powered by Spattoo</p>
       </div>`,
@@ -130,11 +136,39 @@ function buildEmail(typeSlug, recipientEmail, payload) {
     return {
       from:    config.smtp.from,
       to:      recipientEmail,
-      subject: `Quote accepted — ${p.customerName || 'a customer'}`,
+      subject: `Quote approved — ${p.customerName || 'a customer'}`,
       html: `<div style="font-family:sans-serif;max-width:560px;margin:0 auto">
-        <h2 style="color:#2C4433">Quote accepted</h2>
-        <p><b>${p.customerName || 'A customer'}</b> accepted your quote${p.finalPrice != null ? ` of <b>₹${p.finalPrice}</b>` : ''}. The order is now confirmed.</p>
-        <p style="margin-top:24px;color:#888;font-size:12px">Open your Spattoo dashboard to start production.</p>
+        <h2 style="color:#2C4433">Quote approved</h2>
+        <p><b>${p.customerName || 'A customer'}</b> is happy with your quote${p.finalPrice != null ? ` of <b>₹${p.finalPrice}</b>` : ''}. Collect the advance and confirm the order to lock it in.</p>
+        <p style="margin-top:24px;color:#888;font-size:12px">Open your Spattoo dashboard to confirm.</p>
+      </div>`,
+    };
+  }
+
+  if (typeSlug === 'quote_question_baker') {
+    return {
+      from:    config.smtp.from,
+      to:      recipientEmail,
+      subject: `Question on your quote — ${p.customerName || 'a customer'}`,
+      html: `<div style="font-family:sans-serif;max-width:560px;margin:0 auto">
+        <h2 style="color:#2C4433">A question on your quote</h2>
+        <p><b>${p.customerName || 'A customer'}</b> has a question about the quote you sent:</p>
+        <p style="background:#f6f4ef;border-radius:8px;padding:12px 14px;font-style:italic;color:#444">&ldquo;${p.message}&rdquo;</p>
+        <p style="margin-top:24px;color:#888;font-size:12px">Reply by revising the quote in your dashboard, or reach out to them directly.</p>
+      </div>`,
+    };
+  }
+
+  if (typeSlug === 'order_confirmed_customer') {
+    return {
+      from:    `${p.bakerName} <${rawEmail(config.smtp.from)}>`,
+      to:      recipientEmail,
+      subject: `Your order is confirmed!`,
+      html: `<div style="font-family:sans-serif;max-width:560px;margin:0 auto">
+        <h2 style="color:#2C4433">Your order is confirmed</h2>
+        <p>Hi ${p.customerFirstName}, <b>${p.bakerName}</b> has confirmed your order${p.finalPrice != null ? ` (<b>₹${p.finalPrice}</b>)` : ''} — it's all set, they're on it!</p>
+        ${thumbnailHtml}
+        <p style="color:#888;font-size:12px;margin-top:24px">Powered by Spattoo</p>
       </div>`,
     };
   }

@@ -48,10 +48,12 @@ router.get('/storefront/:slug', async (req, res) => {
     // Draft storefronts are not publicly visible until the baker hits Publish.
     if (!baker.storefront_published) return res.status(404).json({ error: 'No storefront available' });
 
-    // Gallery photos + testimonials (ordered) — non-critical; absent is fine.
-    const [{ data: photos }, { data: tms }] = await Promise.all([
+    // Gallery photos + testimonials (ordered) + the owner's public contact (for the
+    // "Talk to {baker}" path) — all non-critical; absent is fine.
+    const [{ data: photos }, { data: tms }, { data: owner }] = await Promise.all([
       supabase.from('baker_storefront_photos').select('storage_key, caption').eq('baker_id', baker.id).order('sort_order'),
       supabase.from('baker_testimonials').select('quote, author, occasion').eq('baker_id', baker.id).order('sort_order'),
+      supabase.from('baker_appusers').select('whatsapp_number, phone').eq('baker_id', baker.id).order('is_primary', { ascending: false }).limit(1).maybeSingle(),
     ]);
 
     res.json({
@@ -69,6 +71,8 @@ router.get('/storefront/:slug', async (req, res) => {
       storefront_customizations: baker.storefront_customizations || {},
       gallery:          (photos ?? []).map(p => ({ url: toPublicUrl(p.storage_key), caption: p.caption })),
       testimonials:     (tms ?? []).map(t => ({ quote: t.quote, author: t.author, occasion: t.occasion })),
+      whatsapp:         owner?.whatsapp_number ?? null,
+      phone:            owner?.phone ?? null,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

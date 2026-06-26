@@ -406,7 +406,7 @@ router.post('/customer/orders/:id/accept', requireAuth, async (req, res) => {
 
     // Notify the baker that the customer accepted.
     const [{ data: baker }, { data: cust }] = await Promise.all([
-      supabase.from('bakers').select('name, email').eq('id', order.baker_id).maybeSingle(),
+      supabase.from('bakers').select('id, name, email').eq('id', order.baker_id).maybeSingle(),
       supabase.from('customers').select('first_name, last_name').eq('id', order.customer_id).maybeSingle(),
     ]);
     notifyQuoteAccepted({ order: updated, baker: baker ?? {}, customer: cust ?? {} })

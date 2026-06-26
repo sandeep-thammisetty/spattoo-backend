@@ -20,6 +20,22 @@ async function insertNotification(typeSlug, recipientEmail, payload) {
   if (error) throw new Error(`Failed to insert notification: ${error.message}`);
 }
 
+// The baker's notification email. `bakers.email` is OPTIONAL at onboarding, so don't
+// rely on it alone — fall back to the primary app-user (owner), whose email is always
+// set. Without this, baker order/quote-accepted emails silently never send.
+async function bakerNotifyEmail(baker) {
+  if (baker?.email) return baker.email;
+  if (!baker?.id) return null;
+  const { data } = await supabase
+    .from('baker_appusers')
+    .select('email')
+    .eq('baker_id', baker.id)
+    .order('is_primary', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return data?.email ?? null;
+}
+
 export async function notifyOrderPlaced({ order, baker, customer }) {
   const customerName = [customer.first_name, customer.last_name].filter(Boolean).join(' ');
   const payload = {
@@ -40,8 +56,9 @@ export async function notifyOrderPlaced({ order, baker, customer }) {
 
   const jobs = [];
 
-  if (baker.email) {
-    jobs.push(insertNotification('order_placed_baker', baker.email, payload));
+  const bakerEmail = await bakerNotifyEmail(baker);
+  if (bakerEmail) {
+    jobs.push(insertNotification('order_placed_baker', bakerEmail, payload));
   }
   if (customer.email) {
     jobs.push(insertNotification('order_placed_customer', customer.email, payload));
@@ -80,9 +97,10 @@ export async function notifyQuoteIssued({ order, baker, customer }) {
 
 // Customer accepted the quote → order confirmed. Email the baker.
 export async function notifyQuoteAccepted({ order, baker, customer }) {
-  if (!baker?.email) return;
+  const bakerEmail = await bakerNotifyEmail(baker);
+  if (!bakerEmail) return;
   const customerName = [customer.first_name, customer.last_name].filter(Boolean).join(' ');
-  await insertNotification('quote_accepted_baker', baker.email, {
+  await insertNotification('quote_accepted_baker', bakerEmail, {
     customerName,
     orderId:    order.id,
     finalPrice: order.final_price ?? order.quoted_price ?? null,

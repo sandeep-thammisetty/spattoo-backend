@@ -21,6 +21,20 @@ DO $$ BEGIN
     SELECT 1 FROM information_schema.columns
     WHERE table_name = 'notifications' AND column_name = 'status' AND data_type = 'text'
   ) THEN
+    -- Drop any CHECK constraint on status (e.g. status IN ('pending',...)) — it's
+    -- stored as `status = ANY(text[])` and would become `enum = text` after the type
+    -- change (the "operator does not exist" error). The enum itself enforces the set.
+    DECLARE c record;
+    BEGIN
+      FOR c IN
+        SELECT conname FROM pg_constraint
+        WHERE conrelid = 'notifications'::regclass AND contype = 'c'
+          AND pg_get_constraintdef(oid) ILIKE '%status%'
+      LOOP
+        EXECUTE format('ALTER TABLE notifications DROP CONSTRAINT %I', c.conname);
+      END LOOP;
+    END;
+
     DROP INDEX IF EXISTS notifications_pending_idx;
     ALTER TABLE notifications ALTER COLUMN status DROP DEFAULT;
     ALTER TABLE notifications

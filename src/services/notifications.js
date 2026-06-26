@@ -1,4 +1,5 @@
 import { supabase } from './supabase.js';
+import { jobQueue } from '../jobs/queue.js';
 
 async function getTypeId(slug) {
   const { data } = await supabase
@@ -9,15 +10,35 @@ async function getTypeId(slug) {
   return data?.id;
 }
 
+// Transactional outbox: the row is the durable record; we DISPATCH it immediately
+// (push to the queue) instead of waiting for the sweeper poll — so the worker fetches
+// it by id and sends with no per-notification status scan in the hot path. If the
+// enqueue fails (e.g. Redis down) the row stays 'pending' and the sweeper backstop
+// retries. We flip to 'enqueued' only while still 'pending', so a worker that already
+// advanced the row (sent/failed) is never clobbered.
 async function insertNotification(typeSlug, recipientEmail, payload) {
   const typeId = await getTypeId(typeSlug);
   if (!typeId) throw new Error(`Unknown notification type: ${typeSlug}`);
 
-  const { error } = await supabase
+  const { data: row, error } = await supabase
     .from('notifications')
-    .insert({ type_id: typeId, recipient_email: recipientEmail, payload });
-
+    .insert({ type_id: typeId, recipient_email: recipientEmail, payload })
+    .select('id')
+    .single();
   if (error) throw new Error(`Failed to insert notification: ${error.message}`);
+
+  try {
+    await jobQueue.add('send_notification', { notificationId: row.id }, {
+      attempts: 1, removeOnComplete: true, removeOnFail: true,
+    });
+    await supabase
+      .from('notifications')
+      .update({ status: 'enqueued', attempts: 1 })
+      .eq('id', row.id)
+      .eq('status', 'pending');
+  } catch (err) {
+    console.error('[notifications] immediate enqueue failed, leaving for sweeper backstop:', err.message);
+  }
 }
 
 // The baker's notification email. `bakers.email` is OPTIONAL at onboarding, so don't

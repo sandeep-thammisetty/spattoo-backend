@@ -1,14 +1,21 @@
 import { supabase } from '../services/supabase.js';
 import { jobQueue } from './queue.js';
 
-const SWEEP_INTERVAL_MS = 30_000;
+// Backstop only. The primary dispatch is the immediate enqueue in insertNotification;
+// this sweep just RECOVERS rows that failed to enqueue (e.g. Redis was down). So it
+// runs infrequently and ignores brand-new rows (they're being enqueued right now) —
+// only rows stuck 'pending' past the grace window are genuinely orphaned.
+const SWEEP_INTERVAL_MS = 120_000;   // 2 min — recovery cadence, not the hot path
+const BACKSTOP_GRACE_MS = 60_000;    // give immediate enqueue time before we step in
 
 async function sweep() {
   try {
+    const cutoff = new Date(Date.now() - BACKSTOP_GRACE_MS).toISOString();
     const { data: pending, error } = await supabase
       .from('notifications')
       .select('id, attempts, max_attempts')
       .eq('status', 'pending')
+      .lt('created_at', cutoff)
       .limit(50);
 
     if (error) throw error;

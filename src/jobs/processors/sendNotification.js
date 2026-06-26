@@ -125,6 +125,19 @@ function buildEmail(typeSlug, recipientEmail, payload) {
     };
   }
 
+  if (typeSlug === 'quote_accepted_baker') {
+    return {
+      from:    config.smtp.from,
+      to:      recipientEmail,
+      subject: `Quote accepted — ${p.customerName || 'a customer'}`,
+      html: `<div style="font-family:sans-serif;max-width:560px;margin:0 auto">
+        <h2 style="color:#2C4433">Quote accepted ✅</h2>
+        <p><b>${p.customerName || 'A customer'}</b> accepted your quote${p.finalPrice != null ? ` of <b>₹${p.finalPrice}</b>` : ''}. The order is now confirmed.</p>
+        <p style="margin-top:24px;color:#888;font-size:12px">Open your Spattoo dashboard to start production.</p>
+      </div>`,
+    };
+  }
+
   throw new Error(`Unknown notification type: ${typeSlug}`);
 }
 

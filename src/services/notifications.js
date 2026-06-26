@@ -77,3 +77,14 @@ export async function notifyQuoteIssued({ order, baker, customer }) {
     quoteValidUntil:   order.quote_valid_until ?? null,
   });
 }
+
+// Customer accepted the quote → order confirmed. Email the baker.
+export async function notifyQuoteAccepted({ order, baker, customer }) {
+  if (!baker?.email) return;
+  const customerName = [customer.first_name, customer.last_name].filter(Boolean).join(' ');
+  await insertNotification('quote_accepted_baker', baker.email, {
+    customerName,
+    orderId:    order.id,
+    finalPrice: order.final_price ?? order.quoted_price ?? null,
+  });
+}

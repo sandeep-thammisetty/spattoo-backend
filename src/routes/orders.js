@@ -3,7 +3,7 @@ import { supabase } from '../services/supabase.js';
 import { requireAuth } from '../middleware/auth.js';
 import { requireCapability } from '../middleware/rbac.js';
 import { config } from '../config.js';
-import { notifyOrderPlaced, notifyDesignUpdated, notifyQuoteIssued } from '../services/notifications.js';
+import { notifyOrderPlaced, notifyDesignUpdated, notifyQuoteIssued, notifyQuoteAccepted } from '../services/notifications.js';
 import { getOrderStatuses, getValidStatusKeys, isQuotePhase } from '../lib/orderStatuses.js';
 
 function toPublicUrl(key) {
@@ -15,6 +15,43 @@ function toPublicUrl(key) {
 // design changed after the quote was issued. Derived, never stored.
 function quoteStale(order) {
   return !!order.quoted_version_id && order.quoted_version_id !== order.current_version_id;
+}
+
+// Customer-facing order shape — everything the customer may see, NEVER the internal
+// suggested_price. Includes design_snapshot so they can re-open/refine.
+const CUSTOMER_ORDER_FIELDS = `
+  id, status, quoted_price, quote_line_items, quote_valid_until, final_price,
+  weight_kg, flavours, special_instructions,
+  delivery_date, delivery_time, delivery_mode, delivery_address,
+  design_thumbnail_url, design_snapshot, current_version_id, quoted_version_id,
+  created_at, updated_at, baker_id, customer_id,
+  bakers ( name, slug )
+`;
+
+function toCustomerOrder(o) {
+  const { baker_id, customer_id, bakers, ...rest } = o;
+  return {
+    ...rest,
+    baker_name:           bakers?.name ?? null,
+    design_thumbnail_url: toPublicUrl(o.design_thumbnail_url),
+    quote_stale:          quoteStale(o),
+  };
+}
+
+// Load an order and verify the authenticated user is the customer who owns it
+// (their auth_user_id is bound to the order's customer). Returns { order } or
+// { status, error } for the route to return.
+async function loadCustomerOrder(authUserId, orderId) {
+  const { data: order } = await supabase
+    .from('orders').select(CUSTOMER_ORDER_FIELDS).eq('id', orderId).maybeSingle();
+  if (!order) return { status: 404, error: 'Order not found' };
+
+  const { data: customer } = await supabase
+    .from('customers').select('id')
+    .eq('id', order.customer_id).eq('auth_user_id', authUserId).maybeSingle();
+  if (!customer) return { status: 403, error: 'Not your order' };
+
+  return { order };
 }
 
 // Shared validation for the design + delivery part of an order body. Customer
@@ -295,6 +332,116 @@ router.post('/customer/orders', requireAuth, async (req, res) => {
     });
 
     res.status(201).json({ orderId: order.id, createdAt: order.created_at });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── GET /api/customer/orders?bakerSlug=… ──────────────────────────────────────
+// The customer's own requests/quotes with this baker (the "your quotes" view).
+// Customer resolved FROM THE TOKEN, scoped to the baker's storefront slug.
+router.get('/customer/orders', requireAuth, async (req, res) => {
+  try {
+    const { bakerSlug } = req.query;
+    if (!bakerSlug) return res.status(400).json({ error: 'bakerSlug is required' });
+
+    const { data: baker } = await supabase
+      .from('bakers').select('id').eq('slug', bakerSlug).eq('is_active', true).maybeSingle();
+    if (!baker) return res.status(404).json({ error: 'Baker not found' });
+
+    const { data: customer } = await supabase
+      .from('customers').select('id').eq('baker_id', baker.id).eq('auth_user_id', req.user.id).maybeSingle();
+    if (!customer) return res.status(403).json({ error: 'Not a customer of this baker' });
+
+    const { data, error } = await supabase
+      .from('orders').select(CUSTOMER_ORDER_FIELDS)
+      .eq('baker_id', baker.id).eq('customer_id', customer.id)
+      .order('created_at', { ascending: false });
+    if (error) return res.status(500).json({ error: error.message });
+
+    res.json((data ?? []).map(toCustomerOrder));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── GET /api/customer/orders/:id ──────────────────────────────────────────────
+router.get('/customer/orders/:id', requireAuth, async (req, res) => {
+  try {
+    const { order, status, error } = await loadCustomerOrder(req.user.id, req.params.id);
+    if (error) return res.status(status).json({ error });
+    res.json(toCustomerOrder(order));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── POST /api/customer/orders/:id/accept ──────────────────────────────────────
+// Customer accepts the current quote → order is confirmed (design locks). Only
+// valid on a fresh (non-stale) 'quoted' order — a quote for a design that has since
+// changed can't be accepted (the baker must re-confirm the price first).
+router.post('/customer/orders/:id/accept', requireAuth, async (req, res) => {
+  try {
+    const { order, status, error } = await loadCustomerOrder(req.user.id, req.params.id);
+    if (error) return res.status(status).json({ error });
+    if (order.status !== 'quoted') return res.status(409).json({ error: 'No active quote to accept.' });
+    if (quoteStale(order)) {
+      return res.status(409).json({ error: 'The design changed since this quote — ask the baker to re-confirm the price.' });
+    }
+
+    const { data: updated, error: uErr } = await supabase
+      .from('orders')
+      .update({ status: 'confirmed', final_price: order.quoted_price, approved_at: new Date().toISOString() })
+      .eq('id', order.id)
+      .select(CUSTOMER_ORDER_FIELDS)
+      .maybeSingle();
+    if (uErr) return res.status(500).json({ error: uErr.message });
+
+    await supabase.from('order_audit_log').insert({
+      order_id: order.id, baker_id: order.baker_id,
+      event: 'quote_accepted',
+      changes: { status: { from: 'quoted', to: 'confirmed' } },
+      changed_by_name: 'Customer',
+    });
+
+    // Notify the baker that the customer accepted.
+    const [{ data: baker }, { data: cust }] = await Promise.all([
+      supabase.from('bakers').select('name, email').eq('id', order.baker_id).maybeSingle(),
+      supabase.from('customers').select('first_name, last_name').eq('id', order.customer_id).maybeSingle(),
+    ]);
+    notifyQuoteAccepted({ order: updated, baker: baker ?? {}, customer: cust ?? {} })
+      .catch(err => console.error('[notifications] quote accepted failed:', err.message));
+
+    res.json(toCustomerOrder(updated));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── POST /api/customer/orders/:id/decline ─────────────────────────────────────
+// Customer declines (the quote or their pending request) → cancelled. Allowed only
+// while still in the quote phase (a confirmed order is locked).
+router.post('/customer/orders/:id/decline', requireAuth, async (req, res) => {
+  try {
+    const { order, status, error } = await loadCustomerOrder(req.user.id, req.params.id);
+    if (error) return res.status(status).json({ error });
+    if (!(await isQuotePhase(order.status))) {
+      return res.status(409).json({ error: 'This order can no longer be declined.' });
+    }
+
+    const { data: updated, error: uErr } = await supabase
+      .from('orders').update({ status: 'cancelled' })
+      .eq('id', order.id).select(CUSTOMER_ORDER_FIELDS).maybeSingle();
+    if (uErr) return res.status(500).json({ error: uErr.message });
+
+    await supabase.from('order_audit_log').insert({
+      order_id: order.id, baker_id: order.baker_id,
+      event: 'status_changed', comment: req.body?.reason ?? null,
+      changes: { status: { from: order.status, to: 'cancelled' } },
+      changed_by_name: 'Customer',
+    });
+
+    res.json(toCustomerOrder(updated));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

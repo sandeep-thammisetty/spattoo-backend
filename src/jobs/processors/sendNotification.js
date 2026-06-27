@@ -14,6 +14,69 @@ function formatDate(str) {
   return new Date(str).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' });
 }
 
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+}
+
+// Branded, email-client-safe (table layout, inline styles) invite email. Returns
+// { subject, text, html }. Kept here (with the other notification templates) so the
+// invite flows through the same durable outbox pipeline as every other email.
+function buildInviteEmail({ bakerName, firstName, link, brandColor, logoUrl, note, expiresAt }) {
+  const brand = brandColor || '#2C4433';
+  const greet = firstName ? `Hi ${esc(firstName)},` : 'Hi there,';
+  const expiry = expiresAt
+    ? new Date(expiresAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })
+    : null;
+  const safeBaker = esc(bakerName);
+
+  const subject = `You're invited to design your cake with ${bakerName}`;
+
+  const text = [
+    `${greet}`,
+    ``,
+    `${bakerName} invited you to design your cake. Use our interactive 3D designer to shape it, choose flavours, and add decorations — exactly the way you imagine it.`,
+    note ? `\nA note from ${bakerName}: "${note}"` : ``,
+    ``,
+    `Start designing: ${link}`,
+    expiry ? `\nThis private link is just for you and expires on ${expiry}.` : ``,
+    ``,
+    `If you weren't expecting this, you can safely ignore this email.`,
+  ].filter(Boolean).join('\n');
+
+  const header = logoUrl
+    ? `<img src="${esc(logoUrl)}" alt="${safeBaker}" width="64" height="64" style="border-radius:50%;display:block;margin:0 auto;border:0;" />`
+    : `<div style="width:64px;height:64px;line-height:64px;border-radius:50%;background:${brand};color:#ffffff;font-size:28px;font-weight:700;text-align:center;margin:0 auto;font-family:Arial,sans-serif;">${esc((bakerName || '?').slice(0,1).toUpperCase())}</div>`;
+
+  const html = `<!DOCTYPE html>
+<html><body style="margin:0;padding:0;background:#EDEAE2;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#EDEAE2;padding:32px 12px;">
+    <tr><td align="center">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;background:#ffffff;border-radius:16px;overflow:hidden;font-family:'Helvetica Neue',Arial,sans-serif;">
+        <tr><td style="padding:36px 36px 8px;text-align:center;">
+          ${header}
+          <h1 style="margin:20px 0 0;font-size:22px;color:${brand};font-weight:800;">${safeBaker} invited you to<br/>design your cake</h1>
+        </td></tr>
+        <tr><td style="padding:20px 36px 0;color:#3C4A40;font-size:15px;line-height:1.6;">
+          <p style="margin:0 0 14px;">${greet}</p>
+          <p style="margin:0 0 14px;"><strong>${safeBaker}</strong> would love for you to create your perfect cake. Use our interactive 3D designer to shape it, choose flavours, and add decorations — exactly the way you imagine it.</p>
+          ${note ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td style="border-left:3px solid ${brand};background:#F7F5F0;padding:12px 16px;border-radius:6px;color:#55615A;font-style:italic;font-size:14px;">"${esc(note)}"<br/><span style="font-style:normal;font-size:12px;color:#9aa;">— ${safeBaker}</span></td></tr></table>` : ``}
+        </td></tr>
+        <tr><td style="padding:28px 36px 8px;text-align:center;">
+          <a href="${esc(link)}" style="display:inline-block;background:${brand};color:#ffffff;text-decoration:none;font-size:16px;font-weight:700;padding:14px 34px;border-radius:12px;">Start designing &rarr;</a>
+        </td></tr>
+        <tr><td style="padding:8px 36px 32px;text-align:center;color:#9aa;font-size:12px;line-height:1.6;">
+          ${expiry ? `<p style="margin:0 0 6px;">This private link is just for you and expires on <strong>${expiry}</strong>.</p>` : ``}
+          <p style="margin:0;">If you weren't expecting this, you can safely ignore this email.</p>
+        </td></tr>
+      </table>
+      <p style="max-width:480px;margin:16px auto 0;color:#9aa;font-size:11px;font-family:Arial,sans-serif;text-align:center;">Powered by Spattoo</p>
+    </td></tr>
+  </table>
+</body></html>`;
+
+  return { subject, text, html };
+}
+
 function orderDetailsHtml(p) {
   const rows = [
     ['Customer',     p.customerName],
@@ -170,6 +233,25 @@ function buildEmail(typeSlug, recipientEmail, payload) {
         ${thumbnailHtml}
         <p style="color:#888;font-size:12px;margin-top:24px">Powered by Spattoo</p>
       </div>`,
+    };
+  }
+
+  if (typeSlug === 'customer_invite') {
+    const { subject, text, html } = buildInviteEmail({
+      bakerName:  p.bakerName,
+      firstName:  p.firstName,
+      link:       p.link,
+      brandColor: p.brandColor,
+      logoUrl:    p.logoUrl,
+      note:       p.note,
+      expiresAt:  p.expiresAt,
+    });
+    return {
+      from: `${p.bakerName} <${rawEmail(config.smtp.from)}>`,
+      to:   recipientEmail,
+      subject,
+      text,
+      html,
     };
   }
 

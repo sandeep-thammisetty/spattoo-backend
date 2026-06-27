@@ -144,6 +144,16 @@ export async function notifyQuoteQuestion({ order, baker, customer, message }) {
   });
 }
 
+// Baker invited a customer to a design session. Email the customer the private
+// storefront link (OTP gates access). Async via the outbox — the invite route no
+// longer sends inline. No-op if there's no email (SMS/WhatsApp not yet wired).
+export async function notifyCustomerInvited({ to, bakerName, firstName, link, brandColor, logoUrl, note, expiresAt }) {
+  if (!to) return;
+  await insertNotification('customer_invite', to, {
+    bakerName, firstName, link, brandColor, logoUrl, note, expiresAt,
+  });
+}
+
 // Baker confirmed the order (advance received). Email the customer.
 export async function notifyOrderConfirmed({ order, baker, customer }) {
   if (!customer?.email) return;

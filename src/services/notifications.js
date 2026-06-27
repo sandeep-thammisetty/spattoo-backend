@@ -167,6 +167,21 @@ export async function notifyOrderConfirmed({ order, baker, customer }) {
   });
 }
 
+// Baker marked the order ready (for pickup / delivery). Tell the customer.
+export async function notifyOrderReady({ order, baker, customer }) {
+  if (!customer?.email) return;
+  await insertNotification('order_ready_customer', customer.email, {
+    customerFirstName: customer.first_name,
+    bakerName:         baker.name,
+    bakerSlug:         baker.slug ?? null,
+    orderId:           order.id,
+    deliveryMode:      order.delivery_mode ?? null,
+    deliveryDate:      order.delivery_date ?? null,
+    deliveryTime:      order.delivery_time ?? null,
+    thumbnailUrl:      order.design_thumbnail_url ?? null,
+  });
+}
+
 // Baker marked the order complete (delivered / picked up). Thank the customer and
 // close the loop.
 export async function notifyOrderCompleted({ order, baker, customer }) {

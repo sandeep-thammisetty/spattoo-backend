@@ -239,6 +239,22 @@ function buildEmail(typeSlug, recipientEmail, payload) {
     };
   }
 
+  if (typeSlug === 'order_ready_customer') {
+    const isDelivery = p.deliveryMode === 'home_delivery';
+    const when = p.deliveryDate ? ` on ${formatDate(p.deliveryDate)}${p.deliveryTime ? ' at ' + p.deliveryTime : ''}` : '';
+    return {
+      from:    `${p.bakerName} <${rawEmail(config.smtp.from)}>`,
+      to:      recipientEmail,
+      subject: `Your order from ${p.bakerName} is ready!`,
+      html: `<div style="font-family:sans-serif;max-width:560px;margin:0 auto">
+        <h2 style="color:#2C4433">Your order is ready</h2>
+        <p>Hi ${p.customerFirstName}, your cake from <b>${p.bakerName}</b> is ready${isDelivery ? ` for delivery${when}` : ` for pickup${when}`}!</p>
+        ${thumbnailHtml}
+        <p style="color:#888;font-size:12px;margin-top:24px">Powered by Spattoo</p>
+      </div>`,
+    };
+  }
+
   if (typeSlug === 'order_completed_customer') {
     const base = p.bakerSlug ? config.storefront.urlTemplate.replace('{slug}', p.bakerSlug) : null;
     return {

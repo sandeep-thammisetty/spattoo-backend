@@ -3,7 +3,7 @@ import { supabase } from '../services/supabase.js';
 import { requireAuth } from '../middleware/auth.js';
 import { requireCapability } from '../middleware/rbac.js';
 import { config } from '../config.js';
-import { notifyOrderPlaced, notifyDesignUpdated, notifyQuoteIssued, notifyQuoteAccepted, notifyQuoteQuestion, notifyOrderConfirmed, notifyOrderCompleted } from '../services/notifications.js';
+import { notifyOrderPlaced, notifyDesignUpdated, notifyQuoteIssued, notifyQuoteAccepted, notifyQuoteQuestion, notifyOrderConfirmed, notifyOrderReady, notifyOrderCompleted } from '../services/notifications.js';
 import { getOrderStatuses, getValidStatusKeys, isQuotePhase, idForKey } from '../lib/orderStatuses.js';
 
 function toPublicUrl(key) {
@@ -643,6 +643,18 @@ router.patch('/orders/:id/status', requireAuth, requireCapability('order:manage'
         baker:    ctx?.bakers ?? {},
         customer: ctx?.customers ?? {},
       }).catch(err => console.error('[notifications] order confirmed failed:', err.message));
+    }
+
+    // Baker marked it ready → tell the customer it's ready for pickup/delivery.
+    if (status === 'ready') {
+      const { data: ctx } = await supabase.from('orders')
+        .select('id, delivery_mode, delivery_date, delivery_time, design_thumbnail_url, bakers(name, slug), customers(email, first_name)')
+        .eq('id', req.params.id).maybeSingle();
+      notifyOrderReady({
+        order:    { id: req.params.id, delivery_mode: ctx?.delivery_mode, delivery_date: ctx?.delivery_date, delivery_time: ctx?.delivery_time, design_thumbnail_url: toPublicUrl(ctx?.design_thumbnail_url) },
+        baker:    ctx?.bakers ?? {},
+        customer: ctx?.customers ?? {},
+      }).catch(err => console.error('[notifications] order ready failed:', err.message));
     }
 
     // Baker marked it complete (delivered/picked up) → thank the customer.

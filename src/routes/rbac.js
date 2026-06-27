@@ -12,6 +12,8 @@ router.get('/me', requireAuth, resolvePrincipal, (req, res) => {
   res.json({
     id: req.user.id,
     email: req.user.email,
+    firstName: req.firstName ?? null,
+    lastName: req.lastName ?? null,
     role: req.role,                 // null when the identity isn't recognized
     bakerId: req.bakerId,
     customerId: req.customerId,     // set when the principal is an invited customer

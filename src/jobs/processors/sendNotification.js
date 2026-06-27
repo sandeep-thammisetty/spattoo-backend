@@ -272,12 +272,26 @@ export async function sendNotification({ notificationId }) {
   const mail = buildEmail(typeSlug, notification.recipient_email, notification.payload);
 
   try {
-    await transporter.sendMail(mail);
+    const info = await transporter.sendMail(mail);
+    // 'sent' only means the SMTP server ACCEPTED the message — not that it reached the
+    // inbox. Log what the provider actually said (response line + message id + any
+    // rejected recipients) so deliverability problems (sandbox, SPF/DKIM, bounces)
+    // are diagnosable from Render logs instead of being invisible behind status=sent.
+    console.log('[notifications] sent', JSON.stringify({
+      notificationId,
+      type:      typeSlug,
+      to:        mail.to,
+      messageId: info?.messageId,
+      response:  info?.response,
+      accepted:  info?.accepted,
+      rejected:  info?.rejected,
+    }));
     await supabase.from('notifications').update({
       status:  'sent',
       sent_at: new Date().toISOString(),
     }).eq('id', notificationId);
   } catch (err) {
+    console.error('[notifications] send failed', JSON.stringify({ notificationId, type: typeSlug, to: mail.to, error: err.message }));
     const exhausted = notification.attempts >= notification.max_attempts;
     await supabase.from('notifications').update({
       status:        exhausted ? 'failed' : 'pending',

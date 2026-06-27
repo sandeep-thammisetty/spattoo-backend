@@ -115,28 +115,31 @@ function buildEmail(typeSlug, recipientEmail, payload) {
     return {
       from:    config.smtp.from,
       to:      recipientEmail,
-      subject: `New Order — ${p.customerName}`,
+      subject: `New quote request — ${p.customerName}`,
       html: `<div style="font-family:sans-serif;max-width:560px;margin:0 auto">
-        <h2 style="color:#2C4433">New Order Received</h2>
-        <p>You have a new cake order from <b>${p.customerName}</b>.</p>
+        <h2 style="color:#2C4433">New quote request</h2>
+        <p>You have a new cake quote request from <b>${p.customerName}</b>. Review the design and send them a quote.</p>
         ${thumbnailHtml}
         ${orderDetailsHtml(p)}
-        <p style="margin-top:24px;color:#888;font-size:12px">Log in to your Spattoo dashboard to view and manage this order.</p>
+        <p style="margin-top:24px;color:#888;font-size:12px">Log in to your Spattoo dashboard to review and quote this request.</p>
       </div>`,
     };
   }
 
   if (typeSlug === 'order_placed_customer') {
+    // This fires when the customer places a request — every order starts at
+    // 'requested' (quote-first flow). It is NOT a confirmation; the actual
+    // confirmation is `order_confirmed_customer`, sent after the baker confirms.
     return {
       from:    `${p.bakerName} <${rawEmail(config.smtp.from)}>`,
       to:      recipientEmail,
-      subject: `Your cake order is confirmed!`,
+      subject: `Your cake request was sent to ${p.bakerName}`,
       html: `<div style="font-family:sans-serif;max-width:560px;margin:0 auto">
-        <h2 style="color:#2C4433">Order Confirmed!</h2>
-        <p>Hi ${p.customerFirstName}, thank you for your order with <b>${p.bakerName}</b>. Here's a summary:</p>
+        <h2 style="color:#2C4433">Request sent!</h2>
+        <p>Hi ${p.customerFirstName}, thanks for designing your cake with <b>${p.bakerName}</b>. Your request has been sent — <b>${p.bakerName}</b> will review your design and get back to you with a quote. Here's what you requested:</p>
         ${thumbnailHtml}
         ${orderDetailsHtml(p)}
-        <p style="margin-top:24px">We'll be in touch soon. If you have any questions, contact your baker directly.</p>
+        <p style="margin-top:24px">We'll email you as soon as your quote is ready. If you have any questions, contact your baker directly.</p>
         <p style="color:#888;font-size:12px;margin-top:24px">Powered by Spattoo</p>
       </div>`,
     };
@@ -226,9 +229,9 @@ function buildEmail(typeSlug, recipientEmail, payload) {
     return {
       from:    `${p.bakerName} <${rawEmail(config.smtp.from)}>`,
       to:      recipientEmail,
-      subject: `Your order is confirmed!`,
+      subject: `Your order is confirmed by ${p.bakerName}!`,
       html: `<div style="font-family:sans-serif;max-width:560px;margin:0 auto">
-        <h2 style="color:#2C4433">Your order is confirmed</h2>
+        <h2 style="color:#2C4433">Your order is confirmed by ${p.bakerName}</h2>
         <p>Hi ${p.customerFirstName}, <b>${p.bakerName}</b> has confirmed your order${p.finalPrice != null ? ` (<b>₹${p.finalPrice}</b>)` : ''} — it's all set, they're on it!</p>
         ${thumbnailHtml}
         <p style="color:#888;font-size:12px;margin-top:24px">Powered by Spattoo</p>

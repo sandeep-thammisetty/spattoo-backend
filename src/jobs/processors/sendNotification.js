@@ -239,6 +239,22 @@ function buildEmail(typeSlug, recipientEmail, payload) {
     };
   }
 
+  if (typeSlug === 'order_completed_customer') {
+    const base = p.bakerSlug ? config.storefront.urlTemplate.replace('{slug}', p.bakerSlug) : null;
+    return {
+      from:    `${p.bakerName} <${rawEmail(config.smtp.from)}>`,
+      to:      recipientEmail,
+      subject: `Thank you from ${p.bakerName}!`,
+      html: `<div style="font-family:sans-serif;max-width:560px;margin:0 auto">
+        <h2 style="color:#2C4433">Your order is complete</h2>
+        <p>Hi ${p.customerFirstName}, your cake order from <b>${p.bakerName}</b> is complete — we hope it made the moment special!</p>
+        ${thumbnailHtml}
+        <p style="margin-top:16px">Thank you for ordering.${base ? ` Design another anytime with <a href="${base}" style="color:#2C4433;font-weight:700">${p.bakerName}</a>.` : ''}</p>
+        <p style="color:#888;font-size:12px;margin-top:24px">Powered by Spattoo</p>
+      </div>`,
+    };
+  }
+
   if (typeSlug === 'customer_invite') {
     const { subject, text, html } = buildInviteEmail({
       bakerName:  p.bakerName,

@@ -9,6 +9,7 @@ import { logSubscriptionEvent, deriveSubscription } from './subscriptions.js';
 import { PLAN }                from '../constants/subscriptionPlans.js';
 import { PERIOD }              from '../constants/billingPeriods.js';
 import { SUBSCRIPTION_STATUS } from '../constants/subscriptionStatuses.js';
+import { createBakerForUser, slugTaken, normalizeSlug, isValidSlug, RESERVED_SLUGS } from '../services/bakerProvisioning.js';
 
 function toPublicUrl(key) {
   if (!key) return null;
@@ -35,12 +36,7 @@ router.post('/admin/bakers', requireAuth, requireCapability('baker:onboard'), as
     }
 
     // Check slug uniqueness before creating the auth user
-    const { data: existing } = await supabase
-      .from('bakers')
-      .select('id')
-      .eq('slug', slug)
-      .maybeSingle();
-    if (existing) return res.status(409).json({ error: 'Slug already taken' });
+    if (await slugTaken(slug)) return res.status(409).json({ error: 'Slug already taken' });
 
     const tempPassword = randomBytes(6).toString('hex') + 'Aa1!';
 
@@ -52,78 +48,67 @@ router.post('/admin/bakers', requireAuth, requireCapability('baker:onboard'), as
     });
     if (authError) return res.status(400).json({ error: authError.message });
 
-    const { data, error } = await supabase
-      .from('bakers')
-      .insert({
-        name,
-        slug,
-        email:            email            || null,
-        tagline:          tagline          || null,
-        instagram_handle: instagram_handle || null,
-        website_url:      website_url      || null,
-        primary_color:    primary_color    || null,
-        accent_color:     accent_color     || null,
-        logo_url:         logo_url         || null,
-        currency_code:    currency_code    || 'INR',
-        timezone:         timezone         || 'Asia/Kolkata',
-        auth_user_id:     authData.user.id,
-        is_active:        true,
-      })
-      .select('id')
-      .single();
-
-    if (error) {
-      await supabase.auth.admin.deleteUser(authData.user.id);
-      return res.status(500).json({ error: error.message });
-    }
-
-    // Insert primary user into baker_appusers
-    const { error: userError } = await supabase
-      .from('baker_appusers')
-      .insert({
-        baker_id:        data.id,
-        first_name:      primaryUser.first_name,
-        last_name:       primaryUser.last_name,
-        email:           primaryUser.email,
-        phone:           primaryUser.phone || null,
-        whatsapp_number: primaryUser.whatsapp_number || null,
-        role:            'owner',
-        is_primary:      true,
-        auth_user_id:    authData.user.id,
+    // Shared provisioning: bakers + baker_appusers + Spark subscription + event.
+    try {
+      const { id } = await createBakerForUser({
+        authUserId: authData.user.id,
+        name, slug, email, tagline, instagram_handle, website_url,
+        primary_color, accent_color, logo_url, currency_code, timezone, primaryUser,
       });
-
-    if (userError) {
-      // Roll back: delete baker row and auth user
-      await supabase.from('bakers').delete().eq('id', data.id);
+      res.status(201).json({ id, tempPassword });
+    } catch (e) {
+      // Admin created the auth user here, so admin rolls it back on failure.
       await supabase.auth.admin.deleteUser(authData.user.id);
-      return res.status(500).json({ error: userError.message });
+      return res.status(500).json({ error: e.message });
     }
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
-    // Start baker on Spark (free, 30 days)
-    const today    = new Date().toISOString().slice(0, 10);
-    const sparkEnd = new Date();
-    sparkEnd.setDate(sparkEnd.getDate() + 30);
+// ── GET /api/bakers/slug-available?slug= ──────────────────────────────────────
+// Public: live availability check for the self-signup storefront-address field.
+router.get('/bakers/slug-available', async (req, res) => {
+  try {
+    const slug = normalizeSlug(req.query.slug);
+    if (!slug || !isValidSlug(slug)) return res.json({ slug, available: false, reason: 'invalid' });
+    if (RESERVED_SLUGS.has(slug))    return res.json({ slug, available: false, reason: 'reserved' });
+    if (await slugTaken(slug))       return res.json({ slug, available: false, reason: 'taken' });
+    return res.json({ slug, available: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
-    const { error: subErr } = await supabase.from('baker_subscriptions').insert({
-      baker_id:          data.id,
-      plan_id:           PLAN.SPARK,
-      billing_period_id: PERIOD.MONTHLY,
-      status:            'active',
-      start_date:        today,
-      end_date:          sparkEnd.toISOString().slice(0, 10),
+// ── POST /api/bakers/self ─────────────────────────────────────────────────────
+// Baker self-signup completion. Auth = the newly-signed-up user's JWT (NOT the
+// service key / admin). Creates their baker on the free Spark tier. Idempotent:
+// one baker per auth user — if they already have one, return it.
+// Body: { name, firstName, lastName, slug?, phone? }
+router.post('/bakers/self', requireAuth, async (req, res) => {
+  try {
+    const { data: existingUser } = await supabase
+      .from('baker_appusers').select('baker_id').eq('auth_user_id', req.user.id).maybeSingle();
+    if (existingUser?.baker_id) return res.status(200).json({ id: existingUser.baker_id, existing: true });
+
+    const name      = (req.body.name ?? '').trim();
+    const firstName = (req.body.firstName ?? '').trim();
+    const lastName  = (req.body.lastName ?? '').trim();
+    const phone     = req.body.phone || null;
+    const slug      = normalizeSlug(req.body.slug || name);
+
+    if (!name)                  return res.status(400).json({ error: 'Business name is required' });
+    if (!firstName || !lastName) return res.status(400).json({ error: 'Your first and last name are required' });
+    if (!slug || !isValidSlug(slug)) return res.status(400).json({ error: 'Pick a valid storefront address (3–40 letters, numbers, hyphens)' });
+    if (RESERVED_SLUGS.has(slug)) return res.status(409).json({ error: 'That storefront address is reserved' });
+    if (await slugTaken(slug))    return res.status(409).json({ error: 'That storefront address is already taken' });
+
+    const { id } = await createBakerForUser({
+      authUserId: req.user.id,
+      name, slug,
+      primaryUser: { first_name: firstName, last_name: lastName, email: req.user.email, phone },
     });
-    if (subErr) console.error('baker_subscriptions insert failed:', subErr.message);
-
-    await supabase.from('bakers').update({
-      subscription_plan_id:   PLAN.SPARK,
-      subscription_status_id: SUBSCRIPTION_STATUS.ACTIVE,
-    }).eq('id', data.id);
-
-    await logSubscriptionEvent(data.id, {
-      event: 'activated', newTier: 'spark', newStatus: 'active', changedBy: 'system',
-    });
-
-    res.status(201).json({ id: data.id, tempPassword });
+    res.status(201).json({ id });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

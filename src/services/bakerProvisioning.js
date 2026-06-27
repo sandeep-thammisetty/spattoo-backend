@@ -45,6 +45,18 @@ export async function createBakerForUser({
   primary_color, accent_color, logo_url,
   currency_code, timezone, primaryUser,
 }) {
+  // Idempotent: a user owns AT MOST ONE baker (enforced by the unique index on
+  // bakers.auth_user_id — migration 012). If they already have one, return it
+  // rather than creating a duplicate. Safe for both callers: self-signup may
+  // retry, and admin onboarding always passes a freshly-created auth user (no
+  // existing baker), so this never short-circuits a genuine new baker.
+  const { data: existing } = await supabase
+    .from('bakers')
+    .select('id')
+    .eq('auth_user_id', authUserId)
+    .maybeSingle();
+  if (existing) return { id: existing.id, alreadyExisted: true };
+
   const { data, error } = await supabase
     .from('bakers')
     .insert({

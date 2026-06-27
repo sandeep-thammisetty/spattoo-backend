@@ -22,6 +22,8 @@ export async function loadPrincipal(user) {
   let role = null;
   let bakerId = null;
   let customerId = null;
+  let firstName = null;
+  let lastName = null;
 
   if (admin) {
     role = admin.role; // 'admin' | 'admin_staff'
@@ -29,12 +31,14 @@ export async function loadPrincipal(user) {
     // 2. Baker app-user?
     const { data: appUser } = await supabase
       .from('baker_appusers')
-      .select('baker_id, role')
+      .select('baker_id, role, first_name, last_name')
       .eq('auth_user_id', userId)
       .maybeSingle();
     if (appUser) {
       role = appUser.role;        // 'owner' | 'staff'
       bakerId = appUser.baker_id;
+      firstName = appUser.first_name;
+      lastName = appUser.last_name;
     } else {
       // 3. Customer? Access is invite-gated: a verified contact only becomes a
       //    'customer' principal while a VALID invite exists. Baker context comes
@@ -44,11 +48,13 @@ export async function loadPrincipal(user) {
         role = 'customer';
         bakerId = resolved.baker_id;
         customerId = resolved.customer_id;
+        firstName = resolved.first_name;
+        lastName = resolved.last_name;
       }
     }
   }
 
-  return { role, bakerId, customerId, capabilities: await capabilitiesForRole(role) };
+  return { role, bakerId, customerId, firstName, lastName, capabilities: await capabilitiesForRole(role) };
 }
 
 // Match the verified contact (email/phone from the OTP session) to a customer,
@@ -62,7 +68,7 @@ export async function resolveCustomer(user) {
 
   const { data: customers } = await supabase
     .from('customers')
-    .select('id')
+    .select('id, first_name, last_name')
     .or(orParts.join(','));
   if (!customers?.length) return null;
 
@@ -75,7 +81,14 @@ export async function resolveCustomer(user) {
     .order('created_at', { ascending: false });
 
   const valid = (invites ?? []).find(iv => !iv.expires_at || iv.expires_at > nowIso);
-  return valid ? { customer_id: valid.customer_id, baker_id: valid.baker_id } : null;
+  if (!valid) return null;
+  const match = customers.find(c => c.id === valid.customer_id);
+  return {
+    customer_id: valid.customer_id,
+    baker_id: valid.baker_id,
+    first_name: match?.first_name ?? null,
+    last_name: match?.last_name ?? null,
+  };
 }
 
 // Capability keys for a role. is_super → ['*'] (matches every capability).
@@ -107,6 +120,8 @@ export async function resolvePrincipal(req, res, next) {
     req.role = p.role;
     req.bakerId = p.bakerId;
     req.customerId = p.customerId;
+    req.firstName = p.firstName;
+    req.lastName = p.lastName;
     req.capabilities = p.capabilities;
     next();
   } catch (err) {
@@ -125,6 +140,8 @@ export function requireCapability(cap) {
         req.role = p.role;
         req.bakerId = p.bakerId;
         req.customerId = p.customerId;
+        req.firstName = p.firstName;
+        req.lastName = p.lastName;
         req.capabilities = p.capabilities;
       }
       if (hasCapability(req.capabilities, cap)) return next();

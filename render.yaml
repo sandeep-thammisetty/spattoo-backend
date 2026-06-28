@@ -11,6 +11,12 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      # Customer storefront URL template; {slug} → baker slug. Set per-environment
+      # in the Render dashboard (dev=https://{slug}.spattoo.dev,
+      # prod=https://{slug}.spattoo.com). Service-level (NOT the shared group) so
+      # dev/prod values don't bleed across environments.
+      - key: STOREFRONT_URL_TEMPLATE
+        sync: false
 
 envVarGroups:
   - name: spattoo-shared

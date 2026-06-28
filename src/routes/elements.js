@@ -103,7 +103,7 @@ router.get('/elements', requireAuth, requireCapability('design:create'), async (
   try {
     const { element_type_id, parents_only } = req.query;
 
-    const ELEM_FIELDS = 'id, name, description, image_url, thumbnail_url, element_type_id, allowed_zones, placement_config, allowed_actions, default_color, sort_order';
+    const ELEM_FIELDS = 'id, name, description, image_url, thumbnail_url, thumb_key, element_type_id, allowed_zones, placement_config, allowed_actions, default_color, sort_order';
 
     if (parents_only === 'true') {
       let query = supabase
@@ -121,6 +121,7 @@ router.get('/elements', requireAuth, requireCapability('design:create'), async (
         ...el,
         image_url:        toPublicUrl(el.image_url),
         thumbnail_url:    toPublicUrl(el.thumbnail_url),
+        thumb_key:        toPublicUrl(el.thumb_key),
         placement_config: expandPlacementConfig(el.placement_config),
       })));
     }
@@ -140,6 +141,7 @@ router.get('/elements', requireAuth, requireCapability('design:create'), async (
       ...el,
       image_url:        toPublicUrl(el.image_url),
       thumbnail_url:    toPublicUrl(el.thumbnail_url),
+      thumb_key:        toPublicUrl(el.thumb_key),
       placement_config: expandPlacementConfig(el.placement_config),
     })));
   } catch (err) {
@@ -168,7 +170,7 @@ router.get('/admin/elements', requireAuth, requireCapability('catalog:admin'), a
   try {
     const { data, error } = await supabase
       .from('cake_elements')
-      .select('id, name, description, image_url, thumbnail_url, element_type_id, parent_id, allowed_zones, placement_config, allowed_actions, default_color, sort_order, is_active, baker_id, file_size')
+      .select('id, name, description, image_url, thumbnail_url, thumb_key, element_type_id, parent_id, allowed_zones, placement_config, allowed_actions, default_color, sort_order, is_active, baker_id, file_size')
       .is('baker_id', null)
       .order('sort_order');
 
@@ -177,6 +179,7 @@ router.get('/admin/elements', requireAuth, requireCapability('catalog:admin'), a
       ...el,
       image_url:     toPublicUrl(el.image_url),
       thumbnail_url: toPublicUrl(el.thumbnail_url),
+      thumb_key:     toPublicUrl(el.thumb_key),
     })));
   } catch (err) {
     res.status(500).json({ error: err.message });

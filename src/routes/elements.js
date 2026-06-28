@@ -7,6 +7,7 @@ import { config } from '../config.js';
 import { removeBackground } from '../services/removebg.js';
 import { jobQueue } from '../jobs/queue.js';
 import { reindexElement } from '../services/elementIndex.js';
+import { generateWebpThumbnail } from '../services/thumbnails.js';
 
 const router = Router();
 
@@ -14,6 +15,18 @@ function toPublicUrl(key) {
   if (!key) return null;
   if (/^https?:\/\//i.test(key)) return key;   // already a full URL — don't double-prefix
   return `${config.r2.publicUrl}/${key}`;
+}
+
+// Generate (or refresh) the optimised WebP picker thumbnail for an element and
+// store its key. Fire-and-forget — never blocks the request, mirrors reindexElement.
+// The raw PNG (thumbnail_url) is retained as the source.
+async function ensureThumbKey(id, thumbnailKey) {
+  try {
+    const webpKey = await generateWebpThumbnail(thumbnailKey);
+    if (webpKey) await supabase.from('cake_elements').update({ thumb_key: webpKey }).eq('id', id);
+  } catch (e) {
+    console.error('thumb_key generation failed:', e.message);
+  }
 }
 
 // Expand R2 keys nested INSIDE placement_config (the photo-frame window mask, the alternate piping
@@ -219,6 +232,8 @@ router.patch('/admin/elements/:id', requireAuth, requireCapability('catalog:admi
     // Re-index when something that affects the search text/embedding changed. Fire-and-forget.
     if (['name', 'description', 'thumbnail_url', 'image_url'].some(k => k in updates))
       reindexElement(id).catch(e => console.error('reindex(update) failed:', e.message));
+    // Regenerate the optimised WebP thumbnail when the raw thumbnail changed. Fire-and-forget.
+    if ('thumbnail_url' in updates) ensureThumbKey(id, updates.thumbnail_url);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -257,6 +272,8 @@ router.post('/admin/elements', requireAuth, requireCapability('catalog:admin'), 
     res.status(201).json({ id: data.id });
     // Index for inspiration matching (fills an empty description + embeds). Fire-and-forget.
     reindexElement(data.id).catch(e => console.error('reindex(create) failed:', e.message));
+    // Generate the optimised WebP picker thumbnail (raw PNG stays as the source). Fire-and-forget.
+    ensureThumbKey(data.id, thumbnail_url);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

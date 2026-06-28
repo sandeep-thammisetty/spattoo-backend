@@ -36,6 +36,12 @@ export async function putObject(key, buffer, contentType) {
   return `${config.r2.publicUrl}/${key}`;
 }
 
+// Downloads an object's bytes as a Buffer (server-side).
+export async function getObjectBuffer(key) {
+  const out = await r2.send(new GetObjectCommand({ Bucket: config.r2.bucket, Key: key }));
+  return Buffer.from(await out.Body.transformToByteArray());
+}
+
 // Deletes an object by key. R2 treats deleting a missing key as success, so this is
 // safe to call even if the file is already gone.
 export async function deleteObject(key) {

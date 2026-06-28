@@ -1,8 +1,10 @@
 services:
+  # ── Production API — auto-deploys from `main` ─────────────────────────────
   - type: web
     name: spattoo-api
     env: node
     plan: starter
+    branch: main
     buildCommand: npm install
     startCommand: node src/index.js
     healthCheckPath: /health
@@ -11,13 +13,38 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
-      # Customer storefront URL template; {slug} → baker slug. Set per-environment
-      # in the Render dashboard (dev=https://{slug}.spattoo.dev,
-      # prod=https://{slug}.spattoo.com). Service-level (NOT the shared group) so
-      # dev/prod values don't bleed across environments.
+      # prod: https://{slug}.spattoo.com  (value set in Render dashboard)
       - key: STOREFRONT_URL_TEMPLATE
         sync: false
+      # Env-specific Redis — kept service-level (NOT in the shared group) so dev
+      # and prod never share an instance. The BullMQ queue name ('jobs') is global
+      # within a Redis, so a shared instance would let workers cross-process jobs.
+      - key: REDIS_URL
+        sync: false
 
+  # ── Dev API — auto-deploys from `dev` ─────────────────────────────────────
+  - type: web
+    name: spattoo-api-dev
+    env: node
+    plan: starter
+    branch: dev
+    buildCommand: npm install
+    startCommand: node src/index.js
+    healthCheckPath: /health
+    envVarGroups:
+      - spattoo-shared
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # dev: https://{slug}.spattoo.dev  (value set in Render dashboard)
+      - key: STOREFRONT_URL_TEMPLATE
+        sync: false
+      # SEPARATE dev Redis instance — its own URL, isolated from prod's queue.
+      - key: REDIS_URL
+        sync: false
+
+# Truly-shared config only (same value across dev + prod today). Env-specific
+# values (REDIS_URL, STOREFRONT_URL_TEMPLATE) live on each service, not here.
 envVarGroups:
   - name: spattoo-shared
     envVars:
@@ -28,6 +55,4 @@ envVarGroups:
       - key: OPENAI_API_KEY
         sync: false
       - key: REMOVE_BG_API_KEY
-        sync: false
-      - key: REDIS_URL
         sync: false

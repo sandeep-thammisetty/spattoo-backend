@@ -134,7 +134,7 @@ export async function createBakerForUser({
     baker_id:          data.id,
     plan_id:           PLAN.SPARK,
     billing_period_id: PERIOD.MONTHLY,
-    status:            'active',
+    status_id:         SUBSCRIPTION_STATUS.ACTIVE,  // table uses status_id (text `status` column was dropped)
     start_date:        today,
     end_date:          sparkEnd.toISOString().slice(0, 10),
   });

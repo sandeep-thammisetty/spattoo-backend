@@ -30,6 +30,35 @@ export async function slugTaken(slug) {
   return !!data;
 }
 
+// Short, unambiguous random token (no 0/o/1/l) used to de-dupe slugs.
+function randomSuffix(n = 4) {
+  const chars = 'abcdefghijkmnpqrstuvwxyz23456789';
+  let s = '';
+  for (let i = 0; i < n; i++) s += chars[Math.floor(Math.random() * chars.length)];
+  return s;
+}
+
+// Derive a UNIQUE storefront slug from the bakery name — server-side, never
+// user-chosen, so a baker can't squat another baker's name. The name-derived base
+// is the stable part; if it's reserved/taken we append a random suffix (e.g.
+// "sweet-cakes" → "sweet-cakes-7k2"). Later, settings will let the owner edit only
+// that suffix, never the base.
+export async function generateUniqueSlug(name) {
+  // Cap the base so base + "-xxxx" still fits the 40-char slug limit.
+  let base = normalizeSlug(name).slice(0, 30).replace(/-+$/g, '');
+  if (base.length < 3) base = `brand-${randomSuffix()}`;
+
+  let candidate = base;
+  for (let i = 0; i < 25; i++) {
+    if (isValidSlug(candidate) && !RESERVED_SLUGS.has(candidate) && !(await slugTaken(candidate))) {
+      return candidate;
+    }
+    candidate = `${base}-${randomSuffix()}`.slice(0, 40).replace(/-+$/g, '');
+  }
+  // Extremely unlikely fallback after 25 collisions.
+  return `brand-${randomSuffix(6)}`;
+}
+
 // Create the baker's DB rows for an ALREADY-EXISTING auth user (caller owns the
 // Supabase Auth user lifecycle): `bakers` + `baker_appusers` (owner/primary) + a
 // Spark (free, 30-day) `baker_subscriptions` row + the subscription event, and mirror

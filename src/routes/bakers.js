@@ -9,7 +9,7 @@ import { logSubscriptionEvent, deriveSubscription } from './subscriptions.js';
 import { PLAN }                from '../constants/subscriptionPlans.js';
 import { PERIOD }              from '../constants/billingPeriods.js';
 import { SUBSCRIPTION_STATUS } from '../constants/subscriptionStatuses.js';
-import { createBakerForUser, slugTaken, normalizeSlug, isValidSlug, RESERVED_SLUGS } from '../services/bakerProvisioning.js';
+import { createBakerForUser, slugTaken, normalizeSlug, isValidSlug, RESERVED_SLUGS, generateUniqueSlug } from '../services/bakerProvisioning.js';
 
 function toPublicUrl(key) {
   if (!key) return null;
@@ -81,34 +81,36 @@ router.get('/bakers/slug-available', async (req, res) => {
 });
 
 // ── POST /api/bakers/self ─────────────────────────────────────────────────────
-// Baker self-signup completion. Auth = the newly-signed-up user's JWT (NOT the
-// service key / admin). Creates their baker on the free Spark tier. Idempotent:
-// one baker per auth user — if they already have one, return it.
-// Body: { name, firstName, lastName, slug?, phone? }
+// Baker self-signup completion (wizard step 1). Auth = the signed-up user's JWT.
+// Creates their baker on the free Spark tier. Idempotent: one baker per auth user.
+// First/last name + phone come from the signup metadata (collected on the signup
+// screen, stored in user_metadata); the slug is generated server-side from the
+// bakery name (never user-chosen — see generateUniqueSlug). Body: { name }.
 router.post('/bakers/self', requireAuth, async (req, res) => {
   try {
     const { data: existingUser } = await supabase
       .from('baker_appusers').select('baker_id').eq('auth_user_id', req.user.id).maybeSingle();
     if (existingUser?.baker_id) return res.status(200).json({ id: existingUser.baker_id, existing: true });
 
+    const meta      = req.user.user_metadata ?? {};
     const name      = (req.body.name ?? '').trim();
-    const firstName = (req.body.firstName ?? '').trim();
-    const lastName  = (req.body.lastName ?? '').trim();
-    const phone     = req.body.phone || null;
-    const slug      = normalizeSlug(req.body.slug || name);
+    const firstName = (req.body.firstName ?? meta.first_name ?? '').trim();
+    const lastName  = (req.body.lastName  ?? meta.last_name  ?? '').trim();
+    const phone     = req.body.phone ?? meta.phone ?? null;
 
-    if (!name)                  return res.status(400).json({ error: 'Business name is required' });
+    if (!name)                   return res.status(400).json({ error: 'Business name is required' });
     if (!firstName || !lastName) return res.status(400).json({ error: 'Your first and last name are required' });
-    if (!slug || !isValidSlug(slug)) return res.status(400).json({ error: 'Pick a valid storefront address (3–40 letters, numbers, hyphens)' });
-    if (RESERVED_SLUGS.has(slug)) return res.status(409).json({ error: 'That storefront address is reserved' });
-    if (await slugTaken(slug))    return res.status(409).json({ error: 'That storefront address is already taken' });
+
+    // Slug is derived from the bakery name and de-duped server-side; the client
+    // never picks it, so no baker can claim another's name.
+    const slug = await generateUniqueSlug(name);
 
     const { id } = await createBakerForUser({
       authUserId: req.user.id,
       name, slug,
       primaryUser: { first_name: firstName, last_name: lastName, email: req.user.email, phone },
     });
-    res.status(201).json({ id });
+    res.status(201).json({ id, slug });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -201,7 +203,7 @@ router.patch('/baker/profile', requireAuth, requireCapability('store:manage'), a
       .maybeSingle();
     if (!contact) return res.status(404).json({ error: 'No baker account found' });
 
-    const ALLOWED = ['primary_color', 'accent_color', 'logo_url', 'instagram_handle', 'website_url', 'tagline', 'story', 'portrait_url'];
+    const ALLOWED = ['primary_color', 'accent_color', 'logo_url', 'instagram_handle', 'website_url', 'tagline', 'story', 'portrait_url', 'address'];
     const updates = {};
     for (const f of ALLOWED) {
       if (f in req.body) updates[f] = req.body[f] || null;

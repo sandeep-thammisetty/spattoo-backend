@@ -214,4 +214,63 @@ router.get('/baker/subscription/history', requireAuth, requireCapability('billin
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ── POST /api/baker/plan/select ──────────────────────────────────────────────
+// Onboarding/dev ONLY: the baker sets their own plan WITHOUT payment, so the signup
+// wizard can be exercised across tiers. DISABLED in production unless explicitly
+// opted in — real upgrades must go through /api/billing/subscribe (Razorpay).
+// Body: { plan: 'spark'|'flame'|'blaze'|'forge' }.
+router.post('/baker/plan/select', requireAuth, requireCapability('billing:manage'), async (req, res) => {
+  try {
+    if (process.env.NODE_ENV === 'production' && process.env.ALLOW_FREE_PLAN_SELECT !== 'true') {
+      return res.status(403).json({ error: 'Plan selection without payment is disabled' });
+    }
+    const planName = String(req.body.plan ?? '').toLowerCase();
+    const planId   = PLAN.ID_BY_NAME[planName];
+    if (!planId) return res.status(400).json({ error: `Unknown plan: ${req.body.plan}` });
+
+    const { data: contact } = await supabase
+      .from('baker_appusers').select('baker_id').eq('auth_user_id', req.user.id).maybeSingle();
+    if (!contact) return res.status(404).json({ error: 'No baker account' });
+    const bakerId = contact.baker_id;
+
+    const current = await deriveSubscription(bakerId);
+    const today   = new Date().toISOString().slice(0, 10);
+
+    // Close the current active subscription row, open a fresh monthly one.
+    if (current.id) {
+      await supabase.from('baker_subscriptions')
+        .update({ status_id: SUBSCRIPTION_STATUS.CANCELLED, end_date: today })
+        .eq('id', current.id);
+    }
+    const end = new Date();
+    end.setMonth(end.getMonth() + PERIOD.MONTHS_BY_ID[PERIOD.MONTHLY]);
+    const { error: insErr } = await supabase.from('baker_subscriptions').insert({
+      baker_id:          bakerId,
+      plan_id:           planId,
+      billing_period_id: PERIOD.MONTHLY,
+      status_id:         SUBSCRIPTION_STATUS.ACTIVE,
+      start_date:        today,
+      end_date:          end.toISOString().slice(0, 10),
+    });
+    if (insErr) return res.status(500).json({ error: insErr.message });
+
+    await supabase.from('bakers')
+      .update({ subscription_plan_id: planId, subscription_status_id: SUBSCRIPTION_STATUS.ACTIVE })
+      .eq('id', bakerId);
+
+    await logSubscriptionEvent(bakerId, {
+      event:          'plan_selected',
+      previousTier:   current.plan?.name ?? null,
+      newTier:        planName,
+      previousStatus: current.status,
+      newStatus:      'active',
+      note:           'Onboarding plan selection (no charge)',
+      changedBy:      'baker',
+      changedById:    req.user.id,
+    });
+
+    res.json({ ok: true, plan: planName });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 export default router;

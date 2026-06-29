@@ -276,8 +276,10 @@ router.post('/billing/webhook', async (req, res) => {
       'subscription.activated': SUBSCRIPTION_STATUS.ACTIVE,
       'subscription.charged':   SUBSCRIPTION_STATUS.ACTIVE,
       'subscription.resumed':   SUBSCRIPTION_STATUS.ACTIVE,
+      'subscription.pending':   SUBSCRIPTION_STATUS.PAST_DUE,   // charge failed; Razorpay retrying (dunning)
       'subscription.paused':    SUBSCRIPTION_STATUS.PAUSED,
-      'subscription.cancelled': SUBSCRIPTION_STATUS.CANCELLED,
+      'subscription.halted':    SUBSCRIPTION_STATUS.EXPIRED,    // retries exhausted — lapsed but RECOVERABLE (same row)
+      'subscription.cancelled': SUBSCRIPTION_STATUS.CANCELLED,  // terminal (user/admin) — a return is a new subscription
       'subscription.completed': SUBSCRIPTION_STATUS.CANCELLED,
       'payment.failed':         SUBSCRIPTION_STATUS.PAST_DUE,
     };
@@ -288,6 +290,14 @@ router.post('/billing/webhook', async (req, res) => {
       const subUpdate = { status_id: newStatusId };
       if ([SUBSCRIPTION_STATUS.CANCELLED, SUBSCRIPTION_STATUS.PAUSED].includes(newStatusId)) {
         subUpdate.end_date = today;
+      }
+      // On a successful (re)charge, advance the paid-through date to Razorpay's
+      // current cycle end — otherwise a RENEWED sub still has last cycle's end_date
+      // and derives as 'expired'. This is also the recovery path: a halted/expired
+      // row (still non-cancelled) is reactivated here → status active + end_date
+      // forward, on the SAME row.
+      if (event === 'subscription.charged' && sub?.current_end) {
+        subUpdate.end_date = new Date(sub.current_end * 1000).toISOString().slice(0, 10);
       }
       await supabase.from('baker_subscriptions').update(subUpdate).eq('id', subRow.id);
       await supabase.from('bakers')

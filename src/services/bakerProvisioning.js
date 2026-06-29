@@ -62,8 +62,8 @@ export async function generateUniqueSlug(name) {
 // Create the baker's DB rows for an ALREADY-EXISTING auth user (caller owns the
 // Supabase Auth user lifecycle): `bakers` + `baker_appusers` (owner/primary) + a
 // Spark (free, 30-day) `baker_subscriptions` row + the subscription event, and mirror
-// plan/status onto the baker. Rolls back the baker row if the appuser insert fails;
-// does NOT touch Supabase Auth. Throws on failure.
+// plan/status onto the baker. Rolls back the baker (and its primary appuser) if the
+// appuser OR subscription insert fails; does NOT touch Supabase Auth. Throws on failure.
 //
 // Shared by admin onboarding (POST /admin/bakers, which first creates the auth user)
 // and self-signup (POST /bakers/self, which uses the authenticated req.user) — ONE
@@ -138,7 +138,14 @@ export async function createBakerForUser({
     start_date:        today,
     end_date:          sparkEnd.toISOString().slice(0, 10),
   });
-  if (subErr) console.error('baker_subscriptions insert failed:', subErr.message);
+  if (subErr) {
+    // A baker must never exist without a subscription (it drives entitlements +
+    // expiry). Roll back the baker and its primary appuser, and fail loudly —
+    // rather than silently leaving an unsubscribed baker (the bug this replaces).
+    await supabase.from('baker_appusers').delete().eq('baker_id', data.id);
+    await supabase.from('bakers').delete().eq('id', data.id);
+    throw new Error(`baker_subscriptions insert failed: ${subErr.message}`);
+  }
 
   await supabase.from('bakers').update({
     subscription_plan_id:   PLAN.SPARK,

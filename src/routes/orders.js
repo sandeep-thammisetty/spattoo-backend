@@ -5,6 +5,28 @@ import { requireCapability } from '../middleware/rbac.js';
 import { config } from '../config.js';
 import { notifyOrderPlaced, notifyDesignUpdated, notifyQuoteIssued, notifyQuoteAccepted, notifyQuoteQuestion, notifyOrderConfirmed, notifyOrderReady, notifyOrderCompleted } from '../services/notifications.js';
 import { getOrderStatuses, getValidStatusKeys, isQuotePhase, idForKey } from '../lib/orderStatuses.js';
+import { getEntitlements } from '../services/entitlements.js';
+
+// Trial/plan gate at the storefront's order INTAKE. A baker stops taking NEW orders
+// once their subscription has lapsed (e.g. Spark's 30-day window) OR they've reached
+// their plan's lifetime order cap (max_orders_total; null = unlimited). This gates
+// CREATION only — existing orders stay fully manageable. Customer-facing message.
+// Returns a {error, code} block payload, or null when the baker can take the order.
+async function orderIntakeBlock(bakerId) {
+  const e = await getEntitlements(bakerId);
+  if (!e.active) {
+    return { error: "This bakery isn't accepting new orders right now.", code: 'BAKER_INACTIVE' };
+  }
+  const cap = e.ent.max_orders_total; // null = unlimited
+  if (cap != null) {
+    const { count } = await supabase
+      .from('orders').select('id', { count: 'exact', head: true }).eq('baker_id', bakerId);
+    if ((count ?? 0) >= cap) {
+      return { error: "This bakery isn't accepting new orders right now.", code: 'ORDER_LIMIT_REACHED' };
+    }
+  }
+  return null;
+}
 
 function toPublicUrl(key) {
   if (!key) return null;
@@ -253,6 +275,10 @@ router.post('/orders', async (req, res) => {
 
     const bakerId = baker.id;
 
+    // ── Trial / order-cap gate (block before creating anything) ─────────────
+    const intakeBlock = await orderIntakeBlock(bakerId);
+    if (intakeBlock) return res.status(403).json(intakeBlock);
+
     // ── Upsert customer ─────────────────────────────────────────────────────
     // Look up by email if provided, otherwise by phone.
     const emailNorm = customer.email?.toLowerCase().trim() || null;
@@ -324,6 +350,10 @@ router.post('/customer/orders', requireAuth, async (req, res) => {
       .maybeSingle();
     if (bakerError) return res.status(500).json({ error: bakerError.message });
     if (!baker)     return res.status(404).json({ error: 'Baker not found' });
+
+    // ── Trial / order-cap gate (block before creating anything) ─────────────
+    const intakeBlock = await orderIntakeBlock(baker.id);
+    if (intakeBlock) return res.status(403).json(intakeBlock);
 
     // ── Resolve the customer FROM THE TOKEN, scoped to this baker ────────────
     // No bound customer row for (this baker, this auth user) → the caller isn't a

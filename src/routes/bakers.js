@@ -10,6 +10,7 @@ import { PLAN }                from '../constants/subscriptionPlans.js';
 import { PERIOD }              from '../constants/billingPeriods.js';
 import { SUBSCRIPTION_STATUS } from '../constants/subscriptionStatuses.js';
 import { createBakerForUser, slugTaken, normalizeSlug, isValidSlug, RESERVED_SLUGS, generateUniqueSlug } from '../services/bakerProvisioning.js';
+import { getEntitlements } from '../services/entitlements.js';
 
 function toPublicUrl(key) {
   if (!key) return null;
@@ -189,6 +190,21 @@ router.get('/baker/profile', requireAuth, async (req, res) => {
       },
       user: { firstName: contact.first_name, lastName: contact.last_name, email: req.user.email },
     });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── GET /api/baker/entitlements ──────────────────────────────────────────────
+// Resolved subscription gate + per-plan entitlements for the logged-in baker.
+// The client reads this for UX gating (the server enforces via the entitlement
+// middleware on the actual routes).
+router.get('/baker/entitlements', requireAuth, async (req, res) => {
+  try {
+    const { data: contact } = await supabase
+      .from('baker_appusers').select('baker_id').eq('auth_user_id', req.user.id).maybeSingle();
+    if (!contact?.baker_id) return res.status(404).json({ error: 'No baker account found' });
+    res.json(await getEntitlements(contact.baker_id));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

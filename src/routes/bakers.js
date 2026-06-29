@@ -11,6 +11,7 @@ import { PERIOD }              from '../constants/billingPeriods.js';
 import { SUBSCRIPTION_STATUS } from '../constants/subscriptionStatuses.js';
 import { createBakerForUser, slugTaken, normalizeSlug, isValidSlug, RESERVED_SLUGS, generateUniqueSlug } from '../services/bakerProvisioning.js';
 import { getEntitlements } from '../services/entitlements.js';
+import { requireEntitlement } from '../middleware/entitlements.js';
 
 function toPublicUrl(key) {
   if (!key) return null;
@@ -384,7 +385,7 @@ async function setPublished(req, res, published) {
     res.status(500).json({ error: err.message });
   }
 }
-router.post('/baker/storefront/publish',   requireAuth, requireCapability('store:manage'), (req, res) => setPublished(req, res, true));
+router.post('/baker/storefront/publish',   requireAuth, requireCapability('store:manage'), requireEntitlement('storefront'), (req, res) => setPublished(req, res, true));
 router.post('/baker/storefront/unpublish', requireAuth, requireCapability('store:manage'), (req, res) => setPublished(req, res, false));
 
 // ── GET /api/baker/testimonials ───────────────────────────────────────────────

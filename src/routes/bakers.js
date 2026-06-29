@@ -203,7 +203,8 @@ router.patch('/baker/profile', requireAuth, requireCapability('store:manage'), a
       .maybeSingle();
     if (!contact) return res.status(404).json({ error: 'No baker account found' });
 
-    const ALLOWED = ['primary_color', 'accent_color', 'logo_url', 'instagram_handle', 'website_url', 'tagline', 'story', 'portrait_url', 'address'];
+    const ALLOWED = ['primary_color', 'accent_color', 'logo_url', 'instagram_handle', 'website_url', 'tagline', 'story', 'portrait_url',
+      'address_line1', 'address_line2', 'street', 'city', 'state', 'postal_code', 'country'];
     const updates = {};
     for (const f of ALLOWED) {
       if (f in req.body) updates[f] = req.body[f] || null;

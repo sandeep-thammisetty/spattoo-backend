@@ -14,7 +14,7 @@ export const ENTITLEMENTS = {
   whatsapp_notifications: { type: 'bool', fallback: false },
   xray_reports:           { type: 'bool', fallback: false },
   // numeric limits — null (in a plan's features) = unlimited
-  max_orders_per_month:   { type: 'int',  fallback: 0 },
+  max_orders_total:       { type: 'int',  fallback: 0 }, // LIFETIME cap — Spark trial = 10; paid = null (unlimited)
   max_team_members:       { type: 'int',  fallback: 1 },
 };
 

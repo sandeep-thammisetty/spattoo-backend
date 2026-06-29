@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { supabase, supabaseAuth } from '../services/supabase.js';
 import { config } from '../config.js';
+import { getOrderAcceptance } from '../services/entitlements.js';
 
 const router = Router();
 
@@ -56,9 +57,14 @@ router.get('/storefront/:slug', async (req, res) => {
       supabase.from('baker_appusers').select('whatsapp_number, phone').eq('baker_id', baker.id).order('is_primary', { ascending: false }).limit(1).maybeSingle(),
     ]);
 
+    // Whether this storefront can take a NEW order right now (trial/cap) — drives a
+    // proactive "not accepting orders" banner so customers aren't blocked at submit.
+    const { accepting } = await getOrderAcceptance(baker.id);
+
     res.json({
       name:             baker.name,
       slug:             baker.slug,
+      accepting_orders: accepting,
       logo_url:         toPublicUrl(baker.logo_url),
       primary_color:    baker.primary_color,
       accent_color:     baker.accent_color,

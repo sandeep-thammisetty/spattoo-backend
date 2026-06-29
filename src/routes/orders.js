@@ -5,27 +5,17 @@ import { requireCapability } from '../middleware/rbac.js';
 import { config } from '../config.js';
 import { notifyOrderPlaced, notifyDesignUpdated, notifyQuoteIssued, notifyQuoteAccepted, notifyQuoteQuestion, notifyOrderConfirmed, notifyOrderReady, notifyOrderCompleted } from '../services/notifications.js';
 import { getOrderStatuses, getValidStatusKeys, isQuotePhase, idForKey } from '../lib/orderStatuses.js';
-import { getEntitlements } from '../services/entitlements.js';
+import { getOrderAcceptance } from '../services/entitlements.js';
 
-// Trial/plan gate at the storefront's order INTAKE. A baker stops taking NEW orders
-// once their subscription has lapsed (e.g. Spark's 30-day window) OR they've reached
-// their plan's lifetime order cap (max_orders_total; null = unlimited). This gates
-// CREATION only — existing orders stay fully manageable. Customer-facing message.
+// Trial/plan gate at the storefront's order INTAKE — shares getOrderAcceptance with
+// the storefront banner so the two can't drift. A baker stops taking NEW orders once
+// their subscription lapses (Spark's 30-day window) OR they hit their plan's lifetime
+// order cap. Gates CREATION only — existing orders stay manageable. Customer-facing.
 // Returns a {error, code} block payload, or null when the baker can take the order.
 async function orderIntakeBlock(bakerId) {
-  const e = await getEntitlements(bakerId);
-  if (!e.active) {
-    return { error: "This bakery isn't accepting new orders right now.", code: 'BAKER_INACTIVE' };
-  }
-  const cap = e.ent.max_orders_total; // null = unlimited
-  if (cap != null) {
-    const { count } = await supabase
-      .from('orders').select('id', { count: 'exact', head: true }).eq('baker_id', bakerId);
-    if ((count ?? 0) >= cap) {
-      return { error: "This bakery isn't accepting new orders right now.", code: 'ORDER_LIMIT_REACHED' };
-    }
-  }
-  return null;
+  const { accepting, code } = await getOrderAcceptance(bakerId);
+  if (accepting) return null;
+  return { error: "This bakery isn't accepting new orders right now.", code };
 }
 
 function toPublicUrl(key) {

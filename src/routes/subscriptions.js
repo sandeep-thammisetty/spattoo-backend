@@ -216,12 +216,14 @@ router.get('/baker/subscription/history', requireAuth, requireCapability('billin
 
 // ── POST /api/baker/plan/select ──────────────────────────────────────────────
 // Onboarding/dev ONLY: the baker sets their own plan WITHOUT payment, so the signup
-// wizard can be exercised across tiers. DISABLED in production unless explicitly
-// opted in — real upgrades must go through /api/billing/subscribe (Razorpay).
-// Body: { plan: 'spark'|'flame'|'blaze'|'forge' }.
+// wizard can be exercised across tiers. Gated by an explicit per-environment flag
+// (ALLOW_FREE_PLAN_SELECT=true) — same model as the marketing SHOW_SIGNIN flag:
+// set it on the dev API, never on prod. NODE_ENV can't distinguish them here (the
+// dev API also runs NODE_ENV=production on Render). Real upgrades go through
+// /api/billing/subscribe (Razorpay). Body: { plan: 'spark'|'flame'|'blaze'|'forge' }.
 router.post('/baker/plan/select', requireAuth, requireCapability('billing:manage'), async (req, res) => {
   try {
-    if (process.env.NODE_ENV === 'production' && process.env.ALLOW_FREE_PLAN_SELECT !== 'true') {
+    if (process.env.ALLOW_FREE_PLAN_SELECT !== 'true') {
       return res.status(403).json({ error: 'Plan selection without payment is disabled' });
     }
     const planName = String(req.body.plan ?? '').toLowerCase();

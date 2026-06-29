@@ -19,7 +19,8 @@ function toPublicUrl(key) {
 
 // Generate (or refresh) the optimised WebP picker thumbnail for an element and
 // store its key. Fire-and-forget — never blocks the request, mirrors reindexElement.
-// The raw PNG (thumbnail_url) is retained as the source.
+// The master thumbnail (thumbnail_url, now itself a WebP) is retained as the source
+// and the fallback (thumb_key ?? thumbnail_url).
 async function ensureThumbKey(id, thumbnailKey) {
   try {
     const webpKey = await generateWebpThumbnail(thumbnailKey);

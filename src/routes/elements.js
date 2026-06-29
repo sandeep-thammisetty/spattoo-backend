@@ -17,6 +17,26 @@ function toPublicUrl(key) {
   return `${config.r2.publicUrl}/${key}`;
 }
 
+// asset_class is stored as a compact surrogate smallint (hot-table rule); callers speak the readable
+// key. Translate at the API boundary so the DB stays compact and clients stay readable.
+const ASSET_CLASS_ID  = { scatter: 1, decor: 2, topper: 3 };
+const ASSET_CLASS_KEY = { 1: 'scatter', 2: 'decor', 3: 'topper' };
+const OPTIMIZER_VERSION = 1;
+
+// Map the GLB cost stats from a request body into DB columns (asset_class → surrogate, stamp
+// optimizer version/time). Returns {} when no stats were sent so non-3D ingest is untouched.
+function glbStatColumns(body) {
+  if (body.asset_class === undefined && body.tri_count === undefined) return {};
+  const cols = { optimizer_version: OPTIMIZER_VERSION, optimized_at: new Date().toISOString() };
+  if (body.asset_class       !== undefined) cols.asset_class       = ASSET_CLASS_ID[body.asset_class] ?? null;
+  if (body.tri_count         !== undefined) cols.tri_count         = body.tri_count;
+  if (body.texture_max_dim   !== undefined) cols.texture_max_dim   = body.texture_max_dim;
+  if (body.decoded_mem_kb    !== undefined) cols.decoded_mem_kb    = body.decoded_mem_kb;
+  if (body.optimized_size_kb !== undefined) cols.optimized_size_kb = body.optimized_size_kb;
+  if (body.over_cap          !== undefined) cols.over_cap          = !!body.over_cap;
+  return cols;
+}
+
 // Generate (or refresh) the optimised WebP picker thumbnail for an element and
 // store its key. Fire-and-forget — never blocks the request, mirrors reindexElement.
 // The master thumbnail (thumbnail_url, now itself a WebP) is retained as the source
@@ -184,13 +204,14 @@ router.get('/admin/elements', requireAuth, requireCapability('catalog:admin'), a
   try {
     const { data, error } = await supabase
       .from('cake_elements')
-      .select('id, name, description, image_url, thumbnail_url, thumb_key, element_type_id, parent_id, allowed_zones, placement_config, allowed_actions, default_color, sort_order, is_active, baker_id, file_size')
+      .select('id, name, description, image_url, thumbnail_url, thumb_key, element_type_id, parent_id, allowed_zones, placement_config, allowed_actions, default_color, sort_order, is_active, baker_id, file_size, asset_class, tri_count, texture_max_dim, decoded_mem_kb, optimized_size_kb, over_cap')
       .is('baker_id', null)
       .order('sort_order');
 
     if (error) return res.status(500).json({ error: error.message });
     res.json(data.map(el => ({
       ...el,
+      asset_class:   ASSET_CLASS_KEY[el.asset_class] ?? null,
       image_url:     toPublicUrl(el.image_url),
       thumbnail_url: toPublicUrl(el.thumbnail_url),
       thumb_key:     toPublicUrl(el.thumb_key),
@@ -220,6 +241,8 @@ router.patch('/admin/elements/:id', requireAuth, requireCapability('catalog:admi
     if (is_active       != null)      updates.is_active        = is_active;
     // Sent alongside a new image_url when an asset is replaced; null clears a stale size.
     if (file_size       !== undefined) updates.file_size        = file_size;
+    // GLB cost stats (re-sent when a 3D asset is replaced via the Studio review).
+    Object.assign(updates, glbStatColumns(req.body));
 
     const { data, error } = await supabase
       .from('cake_elements')
@@ -262,6 +285,7 @@ router.post('/admin/elements', requireAuth, requireCapability('catalog:admin'), 
         default_color:    default_color ?? null,
         sort_order:       sort_order ?? 0,
         file_size:        file_size ?? null,
+        ...glbStatColumns(req.body),
         baker_id:         null,
         is_active:        true,
       })

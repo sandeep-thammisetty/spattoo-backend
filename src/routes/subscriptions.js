@@ -5,6 +5,7 @@ import { requireCapability } from '../middleware/rbac.js';
 import { PLAN }                from '../constants/subscriptionPlans.js';
 import { PERIOD }              from '../constants/billingPeriods.js';
 import { SUBSCRIPTION_STATUS } from '../constants/subscriptionStatuses.js';
+import { planEditorSchema }    from '../constants/entitlements.js';
 
 const router = Router();
 
@@ -48,6 +49,13 @@ export async function deriveSubscription(bakerId) {
     start_date: row.start_date,
   };
 }
+
+// ── GET /admin/entitlements-schema ────────────────────────────────────────────
+// Drives the admin plan editor's typed form (keys/types/labels) so plan `features`
+// are edited as fields, not hand-typed JSON. Source of truth = the entitlement registry.
+router.get('/admin/entitlements-schema', requireAuth, (req, res) => {
+  res.json(planEditorSchema());
+});
 
 // ── GET /admin/subscription-plans ─────────────────────────────────────────────
 router.get('/admin/subscription-plans', requireAuth, async (req, res) => {

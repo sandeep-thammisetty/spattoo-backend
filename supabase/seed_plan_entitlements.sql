@@ -2,27 +2,41 @@
 -- registry (src/constants/entitlements.js) defines the KEYS + fallbacks; these are
 -- the VALUES the resolver reads. Idempotent (plain UPDATE by stable plan name).
 -- null on an int key = unlimited. Keep in sync with the registry + marketing pricing.
+-- See docs (spattoo-core) SUBSCRIPTION_TIERS.md for the rationale behind each value.
+--
+-- 2026-06-30 reshape (tiering Wave 1):
+--   * storefront + custom_branding ON for ALL tiers (Spark = full creative+storefront explore;
+--     fixes Spark onboarding hiding store-setup/brand-colors).
+--   * max_orders_total = null for ALL — Spark gated by the 30-day TRIAL window, NOT an order count.
+--   * whatsapp_notifications OFF all tiers (#20 deferred).
+--   * max_saved_templates NEW: Spark 3 / Flame 30 / Blaze+ unlimited (custom saved templates only).
+--   * max_team_members: 1 / 2 / 4 / 10 (anti-resale cap; no "unlimited", per-seat overage later).
+--   * custom_templates is DEPRECATED (superseded by max_saved_templates) — left for now, inert.
 
+-- trial_days = Spark trial length (plan CONFIG, not an entitlement — the resolver ignores it).
+-- Read by both Spark-grant paths (provisioning + activate-spark). Spark is ONE-TIME + time-boxed
+-- (never permanent); after it expires the baker sees the upgrade screen and customers can't quote.
 update subscription_plans set features = jsonb_build_object(
-  'storefront', false, 'custom_branding', false, 'custom_templates', false,
+  'storefront', true, 'custom_branding', true, 'custom_templates', false,
   'ai_background_removal', false, 'whatsapp_notifications', false, 'xray_reports', false,
-  'max_orders_total', 10, 'max_team_members', 1
+  'max_orders_total', null, 'max_team_members', 1, 'max_saved_templates', 3,
+  'trial_days', 30
 ) where name = 'spark';
 
 update subscription_plans set features = jsonb_build_object(
-  'storefront', true, 'custom_branding', false, 'custom_templates', false,
-  'ai_background_removal', false, 'whatsapp_notifications', true, 'xray_reports', false,
-  'max_orders_total', null, 'max_team_members', 2
+  'storefront', true, 'custom_branding', true, 'custom_templates', false,
+  'ai_background_removal', false, 'whatsapp_notifications', false, 'xray_reports', false,
+  'max_orders_total', null, 'max_team_members', 2, 'max_saved_templates', 30
 ) where name = 'flame';
 
 update subscription_plans set features = jsonb_build_object(
   'storefront', true, 'custom_branding', true, 'custom_templates', true,
-  'ai_background_removal', true, 'whatsapp_notifications', true, 'xray_reports', true,
-  'max_orders_total', null, 'max_team_members', 5
+  'ai_background_removal', true, 'whatsapp_notifications', false, 'xray_reports', true,
+  'max_orders_total', null, 'max_team_members', 4, 'max_saved_templates', null
 ) where name = 'blaze';
 
 update subscription_plans set features = jsonb_build_object(
   'storefront', true, 'custom_branding', true, 'custom_templates', true,
-  'ai_background_removal', true, 'whatsapp_notifications', true, 'xray_reports', true,
-  'max_orders_total', null, 'max_team_members', null
+  'ai_background_removal', true, 'whatsapp_notifications', false, 'xray_reports', true,
+  'max_orders_total', null, 'max_team_members', 10, 'max_saved_templates', null
 ) where name = 'forge';

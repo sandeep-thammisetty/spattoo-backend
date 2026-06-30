@@ -5,6 +5,7 @@ import { requireAuth } from '../middleware/auth.js';
 import { requireCapability } from '../middleware/rbac.js';
 import { config } from '../config.js';
 import { logSubscriptionEvent, deriveSubscription } from './subscriptions.js';
+import { getSparkTrialDays } from '../services/entitlements.js';
 import { SUBSCRIPTION_STATUS } from '../constants/subscriptionStatuses.js';
 import { PAYMENT_STATUS }      from '../constants/paymentStatuses.js';
 import { PLAN }                from '../constants/subscriptionPlans.js';
@@ -193,20 +194,35 @@ router.post('/billing/activate-spark', requireAuth, requireCapability('billing:m
       return res.status(400).json({ error: 'Already on an active plan' });
     }
 
-    const today = new Date().toISOString().slice(0, 10);
+    // Spark is ONE-TIME — granted once (at signup), never as a fallback after a paid sub
+    // lapses. If this baker has ever had a Spark subscription, they must pick a paid plan.
+    const { count: priorSpark } = await supabase.from('baker_subscriptions')
+      .select('id', { count: 'exact', head: true })
+      .eq('baker_id', baker.id).eq('plan_id', PLAN.SPARK);
+    if ((priorSpark ?? 0) > 0) {
+      return res.status(409).json({
+        error: 'Your Spark trial has already been used. Choose a paid plan to continue.',
+        code:  'SPARK_ALREADY_USED',
+      });
+    }
+
+    const today     = new Date().toISOString().slice(0, 10);
+    const trialDays = await getSparkTrialDays();
+    const sparkEnd  = new Date();
+    sparkEnd.setDate(sparkEnd.getDate() + trialDays);
 
     await supabase.from('baker_subscriptions')
       .update({ status_id: SUBSCRIPTION_STATUS.CANCELLED, end_date: today })
       .eq('baker_id', baker.id).in('status_id', [SUBSCRIPTION_STATUS.ACTIVE, SUBSCRIPTION_STATUS.PENDING]);
 
-    // Spark is free with no end date
+    // Spark trial — time-boxed (NEVER permanent), one-time per baker.
     await supabase.from('baker_subscriptions').insert({
       baker_id:          baker.id,
       plan_id:           PLAN.SPARK,
       billing_period_id: PERIOD.MONTHLY,
       status_id:         SUBSCRIPTION_STATUS.ACTIVE,
       start_date:        today,
-      end_date:          null,
+      end_date:          sparkEnd.toISOString().slice(0, 10),
     });
 
     await supabase.from('bakers').update({

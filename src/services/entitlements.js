@@ -11,6 +11,17 @@ async function getPlanFeatures(planId) {
   return (data?.features && typeof data.features === 'object') ? data.features : {};
 }
 
+// Spark trial length in days — configurable on the Spark plan row (features.trial_days),
+// admin-editable, no deploy. Read by BOTH Spark-grant paths (provisioning + activate-spark)
+// so the trial window can never drift. Fallback 30. NOTE: trial_days is plan CONFIG, not an
+// entitlement — getEntitlements only iterates ENTITLEMENTS keys, so it's ignored there.
+export async function getSparkTrialDays() {
+  const { data } = await supabase
+    .from('subscription_plans').select('features').eq('name', 'spark').maybeSingle();
+  const d = data?.features?.trial_days;
+  return Number.isInteger(d) && d > 0 ? d : 30;
+}
+
 // Resolve a baker's entitlements: subscription status (the gate) + the per-key
 // values from their plan, with an INACTIVE subscription collapsing everything to
 // its fallback. The single source of truth both the middleware and the client read.

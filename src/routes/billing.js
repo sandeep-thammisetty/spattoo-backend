@@ -121,6 +121,10 @@ router.post('/billing/subscribe', requireAuth, requireCapability('billing:manage
     const baker = await getBakerForUser(req.user.id, 'id, name, email, billing_customer_id, billing_subscription_id');
     if (!baker) return res.status(404).json({ error: 'Baker not found' });
 
+    // Capture the prior plan/status BEFORE mutating, so we can write an accurate
+    // upgrade/downgrade audit event after the switch.
+    const current = await deriveSubscription(baker.id);
+
     const periodMonths = PERIOD.MONTHS_BY_ID[billing_period_id];
     const today        = new Date().toISOString().slice(0, 10);
     const endDate      = new Date();
@@ -156,6 +160,23 @@ router.post('/billing/subscribe', requireAuth, requireCapability('billing:manage
       subscription_status_id:  SUBSCRIPTION_STATUS.ACTIVE,
     }).eq('id', baker.id);
 
+    // Audit trail: plan IDs are the tier rank (spark<flame<blaze<forge), so the
+    // change direction falls straight out of the id comparison. Coming from an
+    // inactive/no sub (expired, never subscribed) → 'activated'.
+    const prevPlanId = current.plan ? PLAN.ID_BY_NAME[current.plan.name] : null;
+    const event = (current.status !== 'active' || prevPlanId == null) ? 'activated'
+      : planId > prevPlanId ? 'upgraded'
+      : planId < prevPlanId ? 'downgraded'
+      : 'activated';
+    await logSubscriptionEvent(baker.id, {
+      event,
+      previousTier:   current.plan?.name ?? null,
+      newTier:        tier,
+      previousStatus: current.status,
+      newStatus:      'active',
+      changedBy:      'baker',
+    });
+
     // TODO: when Razorpay is live, return { subscription_id, key_id } and open
     //       the Razorpay checkout on the frontend instead of activating immediately.
     res.json({ ok: true });
@@ -170,6 +191,8 @@ router.post('/billing/cancel', requireAuth, requireCapability('billing:manage'),
     const baker = await getBakerForUser(req.user.id, 'id, billing_subscription_id');
     if (!baker) return res.status(404).json({ error: 'Baker not found' });
 
+    const current = await deriveSubscription(baker.id);
+
     await razorpayCancelSubscription(baker.billing_subscription_id, true);
 
     // Only flip the baker status — baker_subscriptions stays active until the cycle ends.
@@ -178,6 +201,15 @@ router.post('/billing/cancel', requireAuth, requireCapability('billing:manage'),
     await supabase.from('bakers')
       .update({ subscription_status_id: SUBSCRIPTION_STATUS.CANCELLED })
       .eq('id', baker.id);
+
+    await logSubscriptionEvent(baker.id, {
+      event:          'cancelled',
+      previousTier:   current.plan?.name ?? null,
+      newTier:        current.plan?.name ?? null,
+      previousStatus: current.status,
+      newStatus:      'cancelled',
+      changedBy:      'baker',
+    });
 
     res.json({ ok: true });
   } catch (err) {

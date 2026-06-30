@@ -7,15 +7,16 @@
 // null in a plan's features means "unlimited" for an int key (see resolver).
 export const ENTITLEMENTS = {
   // booleans
-  storefront:             { type: 'bool', fallback: false }, // public {slug}.spattoo.com
-  custom_branding:        { type: 'bool', fallback: false },
-  custom_templates:       { type: 'bool', fallback: false },
+  storefront:             { type: 'bool', fallback: false }, // public {slug}.spattoo.com — now ON for all tiers
+  custom_branding:        { type: 'bool', fallback: false }, // logo/colors/story — now ON for all tiers
+  custom_templates:       { type: 'bool', fallback: false }, // DEPRECATED — superseded by max_saved_templates (count). Inert; remove when the count-gate is wired.
   ai_background_removal:  { type: 'bool', fallback: false },
-  whatsapp_notifications: { type: 'bool', fallback: false },
+  whatsapp_notifications: { type: 'bool', fallback: false }, // DEFERRED (#20) — off all tiers; inert (read nowhere yet)
   xray_reports:           { type: 'bool', fallback: false },
   // numeric limits — null (in a plan's features) = unlimited
-  max_orders_total:       { type: 'int',  fallback: 0 }, // LIFETIME cap — Spark trial = 10; paid = null (unlimited)
+  max_orders_total:       { type: 'int',  fallback: 0 }, // LIFETIME order cap; null = unlimited. ALL tiers null — Spark is gated by the 30-day TRIAL window (status), not an order count.
   max_team_members:       { type: 'int',  fallback: 1 },
+  max_saved_templates:    { type: 'int',  fallback: 0 }, // custom baker-saved templates (count); Spark 3 / Flame 30 / Blaze+ null(∞). Global library templates are unlimited for all.
 };
 
 // Subscription statuses that DENY access (the coarse gate). past_due / pending are

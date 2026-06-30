@@ -1,5 +1,6 @@
 import { supabase } from './supabase.js';
 import { logSubscriptionEvent } from '../routes/subscriptions.js';
+import { getSparkTrialDays }    from './entitlements.js';
 import { PLAN }                from '../constants/subscriptionPlans.js';
 import { PERIOD }              from '../constants/billingPeriods.js';
 import { SUBSCRIPTION_STATUS } from '../constants/subscriptionStatuses.js';
@@ -125,10 +126,11 @@ export async function createBakerForUser({
     throw new Error(userError.message);
   }
 
-  // Start baker on Spark (free, 30 days).
-  const today    = new Date().toISOString().slice(0, 10);
-  const sparkEnd = new Date();
-  sparkEnd.setDate(sparkEnd.getDate() + 30);
+  // Start baker on Spark — one-time, time-boxed trial; length configurable (features.trial_days).
+  const today     = new Date().toISOString().slice(0, 10);
+  const trialDays = await getSparkTrialDays();
+  const sparkEnd  = new Date();
+  sparkEnd.setDate(sparkEnd.getDate() + trialDays);
 
   const { error: subErr } = await supabase.from('baker_subscriptions').insert({
     baker_id:          data.id,

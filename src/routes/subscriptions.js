@@ -57,6 +57,30 @@ router.get('/admin/entitlements-schema', requireAuth, (req, res) => {
   res.json(planEditorSchema());
 });
 
+// ── GET /plans (public) ───────────────────────────────────────────────────────
+// The marketing plan catalog — ONE source for the billing picker AND the signup
+// onboarding wizard (both used to hardcode their own copy, which drifted). Public:
+// it's the same pricing/feature info shown on the marketing site, and the onboarding
+// wizard reads it before the user even has a baker. Active plans only, in order.
+router.get('/plans', async (req, res) => {
+  try {
+    const FULL = 'name, display_name, tagline, feature_bullets, is_popular, has_storefront, price_monthly, price_yearly, sort_order';
+    let { data, error } = await supabase
+      .from('subscription_plans').select(FULL).eq('is_active', true).order('sort_order');
+    if (error) {
+      // Marketing columns not migrated yet (014) → fall back to base columns so the plan
+      // picker (billing + signup) is never empty due to deploy-before-migration ordering.
+      ({ data, error } = await supabase
+        .from('subscription_plans')
+        .select('name, display_name, price_monthly, price_yearly, sort_order')
+        .eq('is_active', true).order('sort_order'));
+      if (error) return res.status(500).json({ error: error.message });
+      data = (data ?? []).map(p => ({ ...p, tagline: null, feature_bullets: [], is_popular: false, has_storefront: p.name !== 'spark' }));
+    }
+    res.json(data ?? []);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ── GET /admin/subscription-plans ─────────────────────────────────────────────
 router.get('/admin/subscription-plans', requireAuth, async (req, res) => {
   try {
@@ -70,12 +94,18 @@ router.get('/admin/subscription-plans', requireAuth, async (req, res) => {
 // ── POST /admin/subscription-plans ────────────────────────────────────────────
 router.post('/admin/subscription-plans', requireAuth, requireCapability('subscription:override'), async (req, res) => {
   try {
-    const { name, display_name, price_monthly, price_yearly, features, sort_order } = req.body;
+    const { name, display_name, price_monthly, price_yearly, features, sort_order,
+            tagline, feature_bullets, is_popular, has_storefront } = req.body;
     if (!name || !display_name) return res.status(400).json({ error: 'name and display_name are required' });
 
     const { data, error } = await supabase
       .from('subscription_plans')
-      .insert({ name, display_name, price_monthly: price_monthly ?? 0, price_yearly: price_yearly ?? 0, features: features ?? {}, sort_order: sort_order ?? 0 })
+      .insert({
+        name, display_name, price_monthly: price_monthly ?? 0, price_yearly: price_yearly ?? 0,
+        features: features ?? {}, sort_order: sort_order ?? 0,
+        tagline: tagline ?? null, feature_bullets: feature_bullets ?? [],
+        is_popular: is_popular ?? false, has_storefront: has_storefront ?? true,
+      })
       .select().single();
     if (error) return res.status(500).json({ error: error.message });
     res.status(201).json(data);
@@ -85,7 +115,8 @@ router.post('/admin/subscription-plans', requireAuth, requireCapability('subscri
 // ── PATCH /admin/subscription-plans/:id ───────────────────────────────────────
 router.patch('/admin/subscription-plans/:id', requireAuth, requireCapability('subscription:override'), async (req, res) => {
   try {
-    const ALLOWED = ['display_name', 'price_monthly', 'price_yearly', 'features', 'is_active', 'sort_order'];
+    const ALLOWED = ['display_name', 'price_monthly', 'price_yearly', 'features', 'is_active', 'sort_order',
+                     'tagline', 'feature_bullets', 'is_popular', 'has_storefront'];
     const updates = {};
     for (const f of ALLOWED) { if (f in req.body) updates[f] = req.body[f]; }
     if (!Object.keys(updates).length) return res.status(400).json({ error: 'No fields to update' });

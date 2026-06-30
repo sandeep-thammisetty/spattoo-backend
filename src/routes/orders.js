@@ -6,6 +6,10 @@ import { config } from '../config.js';
 import { notifyOrderPlaced, notifyDesignUpdated, notifyQuoteIssued, notifyQuoteAccepted, notifyQuoteQuestion, notifyOrderConfirmed, notifyOrderReady, notifyOrderCompleted } from '../services/notifications.js';
 import { getOrderStatuses, getValidStatusKeys, isQuotePhase, idForKey } from '../lib/orderStatuses.js';
 import { getOrderAcceptance } from '../services/entitlements.js';
+import { deleteObject } from '../services/r2.js';
+
+// Baker may attach at most this many finished-cake photos to an order.
+const MAX_FINISHED_PHOTOS = 3;
 
 // Trial/plan gate at the storefront's order INTAKE — shares getOrderAcceptance with
 // the storefront banner so the two can't drift. A baker stops taking NEW orders once
@@ -666,12 +670,18 @@ router.patch('/orders/:id/status', requireAuth, requireCapability('order:manage'
     }
 
     // Baker marked it ready → tell the customer it's ready for pickup/delivery.
+    // Finished-cake photos (optional, ≤3) the baker uploaded before flipping to ready
+    // ride along in the email — read them here so they're embedded inline. Ordered by
+    // sort_order so the email matches the baker's chosen sequence.
     if (status === 'ready') {
       const { data: ctx } = await supabase.from('orders')
         .select('id, delivery_mode, delivery_date, delivery_time, design_thumbnail_url, bakers(name, slug), customers(email, first_name)')
         .eq('id', req.params.id).maybeSingle();
+      const { data: photoRows } = await supabase.from('order_finished_photos')
+        .select('key').eq('order_id', req.params.id).order('sort_order', { ascending: true });
+      const photoUrls = (photoRows ?? []).map(p => toPublicUrl(p.key)).filter(Boolean);
       notifyOrderReady({
-        order:    { id: req.params.id, delivery_mode: ctx?.delivery_mode, delivery_date: ctx?.delivery_date, delivery_time: ctx?.delivery_time, design_thumbnail_url: toPublicUrl(ctx?.design_thumbnail_url) },
+        order:    { id: req.params.id, delivery_mode: ctx?.delivery_mode, delivery_date: ctx?.delivery_date, delivery_time: ctx?.delivery_time, design_thumbnail_url: toPublicUrl(ctx?.design_thumbnail_url), photoUrls },
         baker:    ctx?.bakers ?? {},
         customer: ctx?.customers ?? {},
       }).catch(err => console.error('[notifications] order ready failed:', err.message));
@@ -690,6 +700,96 @@ router.patch('/orders/:id/status', requireAuth, requireCapability('order:manage'
     }
 
     res.json(withStatusKey(order));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Finished-cake photos ──────────────────────────────────────────────────────
+// Optional (≤3) photos of the finished cake the baker uploads — typically right
+// before marking the order 'ready', so they ride along in the order-ready email
+// (see the ready branch above). Stored as bare R2 keys under orders/photos/ in
+// order_finished_photos; served back as public URLs. Baker-scoped: every route
+// verifies the order belongs to the caller's bakery.
+
+// Resolve the caller's baker_appuser + assert the order is theirs. Returns
+// { appUser } or { status, error } for the route to return.
+async function loadBakerOrder(authUserId, orderId) {
+  const { data: appUser } = await supabase
+    .from('baker_appusers').select('baker_id, id')
+    .eq('auth_user_id', authUserId).maybeSingle();
+  if (!appUser) return { status: 403, error: 'Not a baker account' };
+  const { data: order } = await supabase
+    .from('orders').select('id').eq('id', orderId).eq('baker_id', appUser.baker_id).maybeSingle();
+  if (!order) return { status: 404, error: 'Order not found' };
+  return { appUser };
+}
+
+// GET — list this order's finished photos (ordered), as public URLs for display.
+router.get('/orders/:id/photos', requireAuth, requireCapability('order:manage'), async (req, res) => {
+  try {
+    const ctx = await loadBakerOrder(req.user.id, req.params.id);
+    if (ctx.error) return res.status(ctx.status).json({ error: ctx.error });
+    const { data: rows, error } = await supabase
+      .from('order_finished_photos').select('id, key, sort_order')
+      .eq('order_id', req.params.id).order('sort_order', { ascending: true });
+    if (error) return res.status(500).json({ error: error.message });
+    res.json((rows ?? []).map(r => ({ id: r.id, sort_order: r.sort_order, url: toPublicUrl(r.key) })));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST — replace this order's finished-photo set with `keys` (≤3, ordered by
+// position). Replace (not append) so re-confirming the mark-ready sheet is
+// idempotent; the prior set's R2 objects are pruned so they don't leak. Keys must
+// live under orders/photos/ (the upload allow-list folder).
+router.post('/orders/:id/photos', requireAuth, requireCapability('order:manage'), async (req, res) => {
+  try {
+    const ctx = await loadBakerOrder(req.user.id, req.params.id);
+    if (ctx.error) return res.status(ctx.status).json({ error: ctx.error });
+
+    const keys = Array.isArray(req.body?.keys) ? req.body.keys.map(k => String(k).replace(/^\/+/, '')) : null;
+    if (!keys) return res.status(400).json({ error: 'keys must be an array' });
+    if (keys.length > MAX_FINISHED_PHOTOS) return res.status(400).json({ error: `At most ${MAX_FINISHED_PHOTOS} photos` });
+    if (keys.some(k => !k.startsWith('orders/photos/'))) {
+      return res.status(400).json({ error: 'keys must be under orders/photos/' });
+    }
+
+    // Prune the previous set's R2 objects (fresh uuid filenames ⇒ no overlap with `keys`).
+    const { data: prior } = await supabase
+      .from('order_finished_photos').select('key').eq('order_id', req.params.id);
+    await supabase.from('order_finished_photos').delete().eq('order_id', req.params.id);
+    await Promise.allSettled((prior ?? []).map(p => deleteObject(p.key)));
+
+    let inserted = [];
+    if (keys.length) {
+      const rows = keys.map((key, i) => ({
+        order_id: req.params.id, key, sort_order: i, uploaded_by: ctx.appUser.id,
+      }));
+      const { data, error } = await supabase
+        .from('order_finished_photos').insert(rows).select('id, key, sort_order');
+      if (error) return res.status(500).json({ error: error.message });
+      inserted = data ?? [];
+    }
+    res.json(inserted.map(r => ({ id: r.id, sort_order: r.sort_order, url: toPublicUrl(r.key) })));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE — remove one finished photo (row + its R2 object).
+router.delete('/orders/:id/photos/:photoId', requireAuth, requireCapability('order:manage'), async (req, res) => {
+  try {
+    const ctx = await loadBakerOrder(req.user.id, req.params.id);
+    if (ctx.error) return res.status(ctx.status).json({ error: ctx.error });
+    const { data: row } = await supabase
+      .from('order_finished_photos').select('id, key')
+      .eq('id', req.params.photoId).eq('order_id', req.params.id).maybeSingle();
+    if (!row) return res.status(404).json({ error: 'Photo not found' });
+    await supabase.from('order_finished_photos').delete().eq('id', row.id);
+    await deleteObject(row.key).catch(err => console.error('[orders] photo object delete failed:', err.message));
+    res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

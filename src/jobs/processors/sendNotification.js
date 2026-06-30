@@ -242,6 +242,13 @@ function buildEmail(typeSlug, recipientEmail, payload) {
   if (typeSlug === 'order_ready_customer') {
     const isDelivery = p.deliveryMode === 'home_delivery';
     const when = p.deliveryDate ? ` on ${formatDate(p.deliveryDate)}${p.deliveryTime ? ' at ' + p.deliveryTime : ''}` : '';
+    // Optional finished-cake photos the baker uploaded. Show these (the real cake!)
+    // INSTEAD of the design thumbnail when present — a single column of inline images.
+    const photoUrls = Array.isArray(p.photoUrls) ? p.photoUrls.filter(Boolean) : [];
+    const photosHtml = photoUrls.length
+      ? `<p style="font-size:14px;color:#444;margin:16px 0 8px">Here's how it turned out:</p>` +
+        photoUrls.map(u => `<img src="${u}" alt="Your finished cake" style="display:block;max-width:100%;border-radius:8px;margin:0 0 10px" />`).join('')
+      : thumbnailHtml;
     return {
       from:    `${p.bakerName} <${rawEmail(config.smtp.from)}>`,
       to:      recipientEmail,
@@ -249,7 +256,7 @@ function buildEmail(typeSlug, recipientEmail, payload) {
       html: `<div style="font-family:sans-serif;max-width:560px;margin:0 auto">
         <h2 style="color:#2C4433">Your order is ready</h2>
         <p>Hi ${p.customerFirstName}, your cake from <b>${p.bakerName}</b> is ready${isDelivery ? ` for delivery${when}` : ` for pickup${when}`}!</p>
-        ${thumbnailHtml}
+        ${photosHtml}
         <p style="color:#888;font-size:12px;margin-top:24px">Powered by Spattoo</p>
       </div>`,
     };

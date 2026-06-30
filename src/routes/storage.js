@@ -16,6 +16,7 @@ const ALLOWED_FOLDERS = [
   'portraits',             // baker portrait for the storefront "Our story" section
   'storefront/gallery',    // baker cake photos for the storefront slideshow
   'orders/thumbnails',
+  'orders/photos',     // baker-uploaded finished-cake photos (public so the order-ready email can render them inline)
   'customer/photos',   // customer-uploaded photo for a photo-cake frame (public so the designer can texture it)
   'meshy/source',   // uploaded 2D image for the image→3D wizard (public so Meshy can fetch it)
   'meshy/outputs',  // our copy of the Meshy-generated GLB (written server-side via putObject)

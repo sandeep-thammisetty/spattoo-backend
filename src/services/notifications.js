@@ -179,6 +179,7 @@ export async function notifyOrderReady({ order, baker, customer }) {
     deliveryDate:      order.delivery_date ?? null,
     deliveryTime:      order.delivery_time ?? null,
     thumbnailUrl:      order.design_thumbnail_url ?? null,
+    photoUrls:         order.photoUrls ?? [],   // optional finished-cake photos (≤3), rendered inline
   });
 }
 

@@ -224,20 +224,35 @@ router.post('/billing/activate-spark', requireAuth, requireCapability('billing:m
   }
 });
 
+// payments.status_id is a compact surrogate; translate it to a readable key at the API
+// boundary (PAYMENT_STATUS.NAME_BY_ID) so callers never deal in the magic int.
+const MAX_PAYMENTS = 24;
+
 // ── GET /billing/payments ─────────────────────────────────────────────────────
+// The baker's own payment records, recent → older. `?limit` (1..24, default 24) lets
+// the billing UI fetch only the latest row on first look and the full list on demand,
+// so it never transfers rows nobody views. `total` is the baker's exact payment count
+// (index-only) so the UI can show "View all (N)" without pulling every row.
 router.get('/billing/payments', requireAuth, requireCapability('billing:manage'), async (req, res) => {
   try {
     const baker = await getBakerForUser(req.user.id, 'id');
     if (!baker) return res.status(404).json({ error: 'Baker not found' });
 
-    const { data, error } = await supabase
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || MAX_PAYMENTS, 1), MAX_PAYMENTS);
+
+    const { data, error, count } = await supabase
       .from('payments')
-      .select('id, razorpay_payment_id, amount, currency, status_id, charged_at')
+      .select('id, razorpay_payment_id, amount, currency, status_id, charged_at', { count: 'exact' })
       .eq('baker_id', baker.id)
       .order('charged_at', { ascending: false })
-      .limit(24);
+      .limit(limit);
     if (error) return res.status(500).json({ error: error.message });
-    res.json(data ?? []);
+
+    const payments = (data ?? []).map(({ status_id, ...p }) => ({
+      ...p,
+      status: PAYMENT_STATUS.NAME_BY_ID[status_id] ?? 'unknown',
+    }));
+    res.json({ payments, total: count ?? payments.length });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import crypto from 'crypto';
+import Razorpay from 'razorpay';
 import { supabase } from '../services/supabase.js';
 import { requireAuth } from '../middleware/auth.js';
 import { requireCapability } from '../middleware/rbac.js';
@@ -13,34 +14,55 @@ import { PERIOD }              from '../constants/billingPeriods.js';
 
 const router = Router();
 
-// ── Razorpay stubs ────────────────────────────────────────────────────────────
-// TODO: replace each stub with the real Razorpay SDK call when integrating.
-// SDK: https://github.com/razorpay/razorpay-node
-// All methods should throw on failure so the caller's try/catch handles it.
-
-// TODO: call razorpay.customers.create({ name, email, fail_existing: 0 })
-//       store the returned customer.id in bakers.billing_customer_id
-async function razorpayGetOrCreateCustomer(baker) {
-  if (baker.billing_customer_id) return baker.billing_customer_id;
-  return `cust_mock_${Date.now()}`;
+// ── Razorpay client + helpers ───────────────────────────────────────────────────
+// Lazily construct the SDK so local/dev boot never fails without keys; the helpers
+// throw a clear error at call time when Razorpay isn't configured. `razorpayEnabled`
+// lets the subscribe route fall back to immediate (no-charge) activation in envs
+// without keys, while configured envs go through real Checkout.
+function razorpayEnabled() {
+  return !!(config.razorpay.keyId && config.razorpay.keySecret);
+}
+let _razorpay = null;
+function razorpay() {
+  if (!razorpayEnabled()) throw new Error('Razorpay is not configured (RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET)');
+  if (!_razorpay) _razorpay = new Razorpay({ key_id: config.razorpay.keyId, key_secret: config.razorpay.keySecret });
+  return _razorpay;
 }
 
-// TODO: call razorpay.subscriptions.create({ plan_id, customer_id, customer_notify: 1, total_count, quantity: 1 })
-//       plan_id comes from env RAZORPAY_PLAN_{TIER}_{PERIOD} (e.g. RAZORPAY_PLAN_FLAME_MONTHLY)
-async function razorpayCreateSubscription(_planId, _customerId, _totalCount) {
-  return { id: `sub_mock_${Date.now()}` };
+// Create a Razorpay subscription for a plan. The CUSTOMER is captured at Checkout
+// (subscriptions.create takes NO customer_id) — we return the subscription id, which
+// the frontend hands to Razorpay Checkout for authorisation. total_count = number of
+// billing cycles before it auto-completes.
+async function razorpayCreateSubscription(planId, totalCount, notes) {
+  const sub = await razorpay().subscriptions.create({
+    plan_id:         planId,
+    total_count:     totalCount,
+    quantity:        1,
+    customer_notify: 1,
+    notes:           notes ?? {},
+  });
+  return { id: sub.id };
 }
 
-// TODO: call razorpay.subscriptions.cancel(subscriptionId, { cancel_at_cycle_end: atCycleEnd ? 1 : 0 })
-async function razorpayCancelSubscription(_subscriptionId, _atCycleEnd) {
+// Cancel a Razorpay subscription. atCycleEnd=true keeps access until the cycle ends;
+// false cancels immediately (used when switching plans).
+async function razorpayCancelSubscription(subscriptionId, atCycleEnd) {
+  if (!subscriptionId) return { ok: true };
+  await razorpay().subscriptions.cancel(subscriptionId, !!atCycleEnd);
   return { ok: true };
 }
 
-// TODO: verify webhook signature using crypto.createHmac + config.razorpay.webhookSecret
-//       throw if invalid so the webhook handler returns 400
-function razorpayVerifyWebhook(_rawBody, _signature) {
-  // const expected = crypto.createHmac('sha256', config.razorpay.webhookSecret).update(_rawBody).digest('hex');
-  // if (_signature !== expected) throw new Error('Invalid signature');
+// Verify a webhook is genuinely from Razorpay: HMAC-SHA256 of the RAW body with the
+// webhook secret must equal the X-Razorpay-Signature header. Throws if not (timing-safe).
+function razorpayVerifyWebhook(rawBody, signature) {
+  const secret = config.razorpay.webhookSecret;
+  if (!secret) throw new Error('Razorpay webhook secret not configured');
+  const expected = crypto.createHmac('sha256', secret).update(rawBody).digest('hex');
+  const a = Buffer.from(expected, 'utf8');
+  const b = Buffer.from(String(signature ?? ''), 'utf8');
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+    throw new Error('Invalid webhook signature');
+  }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -118,29 +140,63 @@ router.post('/billing/subscribe', requireAuth, requireCapability('billing:manage
     const planId = PLAN.ID_BY_NAME[tier];
     if (!planId) return res.status(400).json({ error: `Unknown plan: ${tier}` });
 
-    const baker = await getBakerForUser(req.user.id, 'id, name, email, billing_customer_id, billing_subscription_id');
+    const baker = await getBakerForUser(req.user.id, 'id, name, email, billing_subscription_id');
     if (!baker) return res.status(404).json({ error: 'Baker not found' });
-
-    // Capture the prior plan/status BEFORE mutating, so we can write an accurate
-    // upgrade/downgrade audit event after the switch.
-    const current = await deriveSubscription(baker.id);
 
     const periodMonths = PERIOD.MONTHS_BY_ID[billing_period_id];
     const today        = new Date().toISOString().slice(0, 10);
-    const endDate      = new Date();
-    endDate.setMonth(endDate.getMonth() + periodMonths);
+    const totalCount   = Math.ceil(120 / periodMonths);   // ~10 years of cycles ("until cancelled")
 
-    const customerId = await razorpayGetOrCreateCustomer(baker);
-    await supabase.from('bakers').update({ billing_customer_id: customerId }).eq('id', baker.id);
+    // ── Real Razorpay flow ────────────────────────────────────────────────────
+    // Create the Razorpay subscription and hand the Checkout handle to the frontend.
+    // We do NOT activate the baker here — activation happens on the subscription
+    // webhook AFTER the customer authorises payment. A PENDING local row is parked
+    // for the webhook to flip to active.
+    if (razorpayEnabled()) {
+      const razorpayPlanId = process.env[`RAZORPAY_PLAN_${tier.toUpperCase()}_${periodName.toUpperCase()}`];
+      if (!razorpayPlanId) {
+        return res.status(400).json({ error: `No Razorpay plan configured for ${tier} ${periodName}` });
+      }
 
-    if (baker.billing_subscription_id) {
-      await razorpayCancelSubscription(baker.billing_subscription_id, false);
+      // Cancel any in-flight Razorpay subscription before starting a new one.
+      if (baker.billing_subscription_id) {
+        await razorpayCancelSubscription(baker.billing_subscription_id, false)
+          .catch(err => console.error('[billing] cancel previous Razorpay sub failed:', err.message));
+      }
+
+      const subscription = await razorpayCreateSubscription(razorpayPlanId, totalCount, { baker_id: baker.id, tier, period: periodName });
+
+      // Close prior active/pending local rows; park a PENDING row for this attempt.
+      await supabase.from('baker_subscriptions')
+        .update({ status_id: SUBSCRIPTION_STATUS.CANCELLED, end_date: today })
+        .eq('baker_id', baker.id).in('status_id', [SUBSCRIPTION_STATUS.ACTIVE, SUBSCRIPTION_STATUS.PENDING]);
+
+      await supabase.from('baker_subscriptions').insert({
+        baker_id:                baker.id,
+        plan_id:                 planId,
+        billing_period_id:       billing_period_id,
+        status_id:               SUBSCRIPTION_STATUS.PENDING,
+        start_date:              today,
+        end_date:                null,
+        billing_subscription_id: subscription.id,
+      });
+
+      await supabase.from('bakers').update({
+        billing_subscription_id: subscription.id,
+        subscription_plan_id:    planId,
+        subscription_status_id:  SUBSCRIPTION_STATUS.PENDING,
+      }).eq('id', baker.id);
+
+      // The activation audit event is logged by the webhook once payment authorises.
+      return res.json({ key_id: config.razorpay.keyId, subscription_id: subscription.id });
     }
 
-    const totalCount   = Math.ceil(120 / periodMonths);
-    const subscription = await razorpayCreateSubscription(`RAZORPAY_PLAN_${tier.toUpperCase()}_${periodName.toUpperCase()}`, customerId, totalCount);
+    // ── No-keys fallback (local/dev) ──────────────────────────────────────────
+    // Activate immediately with no charge so billing is exercisable without keys.
+    const current = await deriveSubscription(baker.id);   // prior plan/status for the audit event
+    const endDate = new Date();
+    endDate.setMonth(endDate.getMonth() + periodMonths);
 
-    // Close any previous active/pending subscription row
     await supabase.from('baker_subscriptions')
       .update({ status_id: SUBSCRIPTION_STATUS.CANCELLED, end_date: today })
       .eq('baker_id', baker.id).in('status_id', [SUBSCRIPTION_STATUS.ACTIVE, SUBSCRIPTION_STATUS.PENDING]);
@@ -155,31 +211,22 @@ router.post('/billing/subscribe', requireAuth, requireCapability('billing:manage
     });
 
     await supabase.from('bakers').update({
-      billing_subscription_id: subscription.id,
-      subscription_plan_id:    planId,
-      subscription_status_id:  SUBSCRIPTION_STATUS.ACTIVE,
+      subscription_plan_id:   planId,
+      subscription_status_id: SUBSCRIPTION_STATUS.ACTIVE,
     }).eq('id', baker.id);
 
-    // Audit trail: plan IDs are the tier rank (spark<flame<blaze<forge), so the
-    // change direction falls straight out of the id comparison. Coming from an
-    // inactive/no sub (expired, never subscribed) → 'activated'.
+    // Plan IDs are the tier rank (spark<flame<blaze<forge) → direction from the id compare.
     const prevPlanId = current.plan ? PLAN.ID_BY_NAME[current.plan.name] : null;
     const event = (current.status !== 'active' || prevPlanId == null) ? 'activated'
       : planId > prevPlanId ? 'upgraded'
       : planId < prevPlanId ? 'downgraded'
       : 'activated';
     await logSubscriptionEvent(baker.id, {
-      event,
-      previousTier:   current.plan?.name ?? null,
-      newTier:        tier,
-      previousStatus: current.status,
-      newStatus:      'active',
-      changedBy:      'baker',
+      event, previousTier: current.plan?.name ?? null, newTier: tier,
+      previousStatus: current.status, newStatus: 'active', changedBy: 'baker',
     });
 
-    // TODO: when Razorpay is live, return { subscription_id, key_id } and open
-    //       the Razorpay checkout on the frontend instead of activating immediately.
-    res.json({ ok: true });
+    res.json({ ok: true, mock: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -193,7 +240,12 @@ router.post('/billing/cancel', requireAuth, requireCapability('billing:manage'),
 
     const current = await deriveSubscription(baker.id);
 
-    await razorpayCancelSubscription(baker.billing_subscription_id, true);
+    // Cancel at cycle end in Razorpay (keeps access until paid-through). Best-effort:
+    // a Razorpay error shouldn't block the local cancel. No-op without keys / no sub.
+    if (razorpayEnabled() && baker.billing_subscription_id) {
+      await razorpayCancelSubscription(baker.billing_subscription_id, true)
+        .catch(err => console.error('[billing] Razorpay cancel failed:', err.message));
+    }
 
     // Only flip the baker status — baker_subscriptions stays active until the cycle ends.
     // A daily job handles expiring baker_subscriptions rows once end_date has passed.
@@ -330,7 +382,7 @@ router.post('/billing/webhook', async (req, res) => {
     if (!bakerRow) return res.json({ ok: true });
 
     const { data: subRow } = await supabase
-      .from('baker_subscriptions').select('id')
+      .from('baker_subscriptions').select('id, plan_id')
       .eq('baker_id', bakerRow.id).not('status_id', 'eq', SUBSCRIPTION_STATUS.CANCELLED)
       .order('created_at', { ascending: false }).limit(1).maybeSingle();
     if (!subRow) return res.json({ ok: true });
@@ -366,6 +418,17 @@ router.post('/billing/webhook', async (req, res) => {
       await supabase.from('bakers')
         .update({ subscription_status_id: newStatusId })
         .eq('id', bakerRow.id);
+    }
+
+    // First activation (customer authorised payment) → record it in the subscription
+    // history. subscribe() doesn't log for the paid flow, so the audit event lives here.
+    if (event === 'subscription.activated') {
+      await logSubscriptionEvent(bakerRow.id, {
+        event:     'activated',
+        newTier:   PLAN.NAME_BY_ID[subRow.plan_id] ?? null,
+        newStatus: 'active',
+        changedBy: 'razorpay',
+      }).catch(err => console.error('[billing] activation event log failed:', err.message));
     }
 
     if (payment?.id && (event === 'subscription.charged' || event === 'payment.failed')) {

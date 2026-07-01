@@ -201,7 +201,20 @@ router.post('/billing/subscribe', requireAuth, requireCapability('billing:manage
       return res.json({ key_id: config.razorpay.keyId, subscription_id: subscription.id });
     }
 
-    // ── No-keys fallback (local/dev) ──────────────────────────────────────────
+    // ── No-keys fallback (local/dev ONLY) ─────────────────────────────────────
+    // SEC-6: reaching here means Razorpay is NOT configured, so activation would be a
+    // FREE grant of whatever tier was requested. That must never happen in prod — if the
+    // keys were ever missing/rotated out, any baker could self-grant Blaze/Forge at ₹0.
+    // Fail CLOSED behind the same explicit per-environment flag /baker/plan/select uses
+    // (ALLOW_FREE_PLAN_SELECT=true — set on the dev API only, never prod). This is purely
+    // a dev affordance to exercise billing without keys; real activation goes through the
+    // Razorpay branch above. (Selecting the free tier / downgrading to free is unaffected —
+    // that goes through /billing/cancel or /baker/plan/select, not this no-charge path.)
+    if (process.env.ALLOW_FREE_PLAN_SELECT !== 'true') {
+      console.error('[billing] subscribe blocked: Razorpay not configured and ALLOW_FREE_PLAN_SELECT is not set — refusing to activate a paid plan without payment');
+      return res.status(503).json({ error: 'Billing is temporarily unavailable. Please try again shortly.' });
+    }
+
     // Activate immediately with no charge so billing is exercisable without keys.
     const current = await deriveSubscription(baker.id);   // prior plan/status for the audit event
     const endDate = new Date();

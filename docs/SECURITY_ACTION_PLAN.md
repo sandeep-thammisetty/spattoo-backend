@@ -113,12 +113,17 @@ forget — see SEC-1, SEC-11). The RBAC model is sound: a separate `admins` tabl
   resolve a tenant. **Deeper hardening (future):** `Content-Disposition: attachment` on user-uploaded
   public objects, or serve them from a sandboxed asset origin — defense-in-depth beyond the MIME gate.)_
 
-- [ ] **SEC-6 — Paid-plan self-activation fails *open* if Razorpay keys are unset.**
-  `src/routes/billing.js:204-239` — when `razorpayEnabled()` is false, `POST /billing/subscribe`
-  activates any requested paid tier with **no charge**. It's gated only by env-var presence; if the prod
-  key is ever missing/rotated out, every baker can self-grant Blaze/Forge.
-  **Fix:** gate the keyless fallback behind an explicit flag (like `ALLOW_FREE_PLAN_SELECT`, already used
-  in `subscriptions.js:264`) so a missing key **fails closed**.
+- [x] **SEC-6 — Paid-plan self-activation fails *open* if Razorpay keys are unset. ✅ DONE.**
+  Was: when `razorpayEnabled()` is false, `POST /billing/subscribe` activated any requested tier with
+  **no charge** (gated only by env-var presence) — so if the prod key were ever missing/rotated out,
+  any baker could self-grant Blaze/Forge at ₹0. **Fix (`src/routes/billing.js`):** the no-keys fallback
+  now **fails closed** — it activates only when `ALLOW_FREE_PLAN_SELECT === 'true'` (the same explicit
+  per-environment dev flag `/baker/plan/select` uses — set on the dev API, never prod; reused, not a new
+  flag). Otherwise it returns 503 and logs the misconfiguration. In prod (flag off + keys on) real
+  bakers always take the Razorpay branch, so the free-grant path is unreachable; the fallback is purely
+  a dev affordance. Downgrade-to-free is unaffected (that's `/billing/cancel` / `/baker/plan/select`, not
+  this no-charge path). No legitimate flow breaks (signup defaults to Spark via `createBakerForUser`, not
+  this endpoint).
 
 - [ ] **SEC-7 — Cross-tenant reads of private catalog data.**
   `GET /templates/:id` (`src/routes/templates.js:75`) has no `baker_id` filter (the list route does) →

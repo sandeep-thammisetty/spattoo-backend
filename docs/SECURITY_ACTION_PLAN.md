@@ -155,6 +155,24 @@ forget — see SEC-1, SEC-11). The RBAC model is sound: a separate `admins` tabl
   garbage fail; localhost gated by env). **Env to set:** dev Render `STOREFRONT_URL_TEMPLATE` →
   `https://{slug}.spattoo.dev` (or `CORS_BASE_DOMAIN=spattoo.dev`); prod → set `CORS_ALLOW_LOCALHOST=false`.
 
+- [ ] **SEC-8b — R2 / CDN asset-bucket CORS (custom domain `spattoocdn.com`). 🗓️ WITH THE CDN ROLLOUT.**
+  _(Cloudflare R2 / Cloudflare-side config — NOT `spattoo-api`; tracked here to keep one ledger. Separate
+  concern from SEC-8: that governs who may call the API; this governs who may READ assets.)_ CORS is
+  directional — the `Origin` is the **reading page**, not the serving host. So `spattoocdn.com` is an
+  asset SERVER, never an API caller → **do NOT add it to the SEC-8 API allowlist** (`src/lib/cors.js`
+  unchanged). What's needed: the **R2 bucket's own CORS policy** must return `Access-Control-Allow-Origin`
+  for our app/storefront origins, because the 3D designer loads GLBs/textures cross-origin into WebGL
+  with `crossOrigin='anonymous'` (`spattoo-core/src/designer/**`) — without it, tainted-canvas /
+  texture-load failures (the known "CORS-poisoned cache" bug). Set on the bucket:
+  `AllowedOrigins: https://*.spattoo.com, https://*.spattoo.dev, https://app.spattoo.com` (+ dev
+  localhost); `AllowedMethods: GET, HEAD`; `AllowedHeaders: *` (or at least `Range` for GLB streaming).
+  **Also:** point `R2_PUBLIC_URL` → `https://spattoocdn.com` (flows through `config.r2.publicUrl` →
+  `sign-upload` `publicUrl` + `toPublicUrl`; stored bare keys expand automatically — verify nothing has
+  an OLD absolute R2 URL baked into stored design JSON). **Bonus:** a separate asset origin isolates
+  user-uploaded content from the app origin — this realises the "sandboxed asset origin" hardening noted
+  under SEC-5. **Future (CSP):** if a Content-Security-Policy is later added to the web apps,
+  `spattoocdn.com` must be in `img-src`/`connect-src` — no CSP today, so nothing to do yet.
+
 - [x] **SEC-9 — Raw internal error messages leaked to clients. ✅ DONE.**
   Was: **228** route sites (far more than the "~20" first estimate) did `res.status(500).json({ error:
   err.message })` (catch blocks) or `if (error) return res.status(500).json({ error: error.message })`

@@ -20,14 +20,16 @@ forget — see SEC-1, SEC-11). The RBAC model is sound: a separate `admins` tabl
 {admin, admin_staff}` (`is_super`), resolved before bakers/customers, deny-by-default
 (`src/middleware/rbac.js:15`). The gap is routing, not identity. Turn privilege into a boundary:
 
-- [ ] **SEC-0a — Path-boundary admin guard.** In `src/server.js`, **before** the `app.use('/api', …router)`
-  lines, add `app.use('/api/admin', requireAuth, requireAdmin)` where `requireAdmin` asserts the
-  principal is `admin`/`admin_staff` (403 otherwise). Express matches by prefix, so **every current and
-  future `/api/admin/*` route is gated at the boundary — impossible to forget.** Keep per-route
-  `requireCapability(...)` on top for granularity. (This alone closes SEC-1 and SEC-11.)
-- [ ] **SEC-0b — Regression guard.** Add a boot assertion / `check` script (like `check:schema`) that
-  fails if any privileged handler is registered **outside** `/api/admin`, or if the boundary middleware
-  is missing. First audit that all privileged routes actually use the `/api/admin` prefix.
+- [x] **SEC-0a — Path-boundary admin guard. ✅ DONE.** `src/server.js` mounts
+  `app.use('/api/admin', requireAuth, requireAdmin)` before the routers; `requireAdmin`
+  (`src/middleware/rbac.js`) requires an INTERNAL admin principal (a row in `admins`, via an `isAdmin`
+  flag — not merely an admin capability). Every `/api/admin/*` route is now gated at the boundary.
+  Per-route `requireCapability(...)` still applies on top. **This also closes SEC-1 and SEC-11.**
+- [x] **SEC-0b — Regression guard. ✅ DONE.** `scripts/check-admin-routes.mjs` (`npm run check:admin-routes`,
+  also in `npm run check`) fails if any admin-capability route sits outside `/api/admin`, or if the
+  boundary middleware is missing. Audit result: all privileged routes are under `/admin` **except**
+  `POST /jobs/extract` (`jobs.js`), which is documented-exempt (still protected by its per-route
+  `catalog:admin` cap) — see follow-up below.
 - [ ] **SEC-0c — (Later, at productionization) separate deploy target.** Split a second entry point
   `admin-server.js` (admin routers + `requireAdmin` only) from the same repo, deployed as a separate
   Render service on a **non-public host** (admin app / VPN / IP-allowlist). The public service never
@@ -38,13 +40,10 @@ forget — see SEC-1, SEC-11). The RBAC model is sound: a separate `admins` tabl
 
 ## 🔴 Critical
 
-- [ ] **SEC-1 — `/api/admin/patterns` has no authorization.**
-  `src/routes/patterns.js:30, 64` — `POST` and `DELETE /api/admin/patterns/:slug` are gated by
-  `requireAuth` **only** (no capability). Any authenticated principal — a rival baker, staff, or an
-  invited **customer** — can delete/inject **global** pattern master data every tenant depends on (a
-  service-key write).
-  **Fix:** add `requireCapability('catalog:admin')` to both routes (SEC-0a would also cover this at the
-  boundary).
+- [x] **SEC-1 — `/api/admin/patterns` has no authorization. ✅ CLOSED by SEC-0a.**
+  `src/routes/patterns.js:30, 64` — these were `requireAuth`-only. They now sit behind the
+  `/api/admin` boundary (`requireAdmin`), so non-admins get 403. Exposure closed. _(Optional
+  defense-in-depth: add `requireCapability('catalog:admin')` per-route for consistency with siblings.)_
 
 ---
 
@@ -124,10 +123,9 @@ forget — see SEC-1, SEC-11). The RBAC model is sound: a separate `admins` tabl
 
 ## 🟢 Low
 
-- [ ] **SEC-11 — Admin config readable by any authenticated user.**
+- [x] **SEC-11 — Admin config readable by any authenticated user. ✅ CLOSED by SEC-0a.**
   `GET /admin/entitlements-schema` (`src/routes/subscriptions.js:57`) and `GET /admin/subscription-plans`
-  (`:86`, `select('*')`) are `requireAuth`-only. **Fix:** gate with an admin capability (covered by
-  SEC-0a).
+  (`:86`) were `requireAuth`-only; now behind the `/api/admin` boundary (`requireAdmin`).
 - [ ] **SEC-12 — Debug endpoints shipped.** `GET /billing/debug-me`, `GET /billing/ping`
   (`src/routes/billing.js:84, 87`). **Fix:** remove or env-gate.
 - [ ] **SEC-13 — Data bug (not security).** `src/routes/jobs.js:19` writes an auth-user UUID into the
@@ -136,6 +134,10 @@ forget — see SEC-1, SEC-11). The RBAC model is sound: a separate `admins` tabl
 ---
 
 ## Architectural follow-up
+- [ ] **SEC-15 — Relocate `POST /jobs/extract` under `/api/admin`.** It's an admin-only job
+  (`catalog:admin`) but sits outside `/admin`, so the boundary can't backstop it (currently exempt in
+  `check-admin-routes.mjs`; still protected by its per-route cap). Rename to `/admin/jobs/extract` and
+  update the `spattoo-admin` client call, then remove it from the check's `EXEMPT` set.
 - [ ] **SEC-14 — Shared `assertBakerOwns(table, id)` helper.** The "look up `baker_id` from the token,
   then `.eq('baker_id', …)`" pattern is duplicated ~30×; that duplication is where SEC-2/SEC-7 slipped in.
   One shared helper both reduces risk and matches the project-wide DRY/reuse invariant (root `CLAUDE.md`).

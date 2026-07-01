@@ -54,7 +54,7 @@ export async function loadPrincipal(user) {
     }
   }
 
-  return { role, bakerId, customerId, firstName, lastName, capabilities: await capabilitiesForRole(role) };
+  return { role, bakerId, customerId, firstName, lastName, isAdmin: !!admin, capabilities: await capabilitiesForRole(role) };
 }
 
 // Match the verified contact (email/phone from the OTP session) to a customer,
@@ -113,41 +113,49 @@ export function hasCapability(capabilities, cap) {
   return capabilities?.includes(SUPER) || capabilities?.includes(cap);
 }
 
-// Middleware: attach req.role / req.bakerId / req.capabilities. Run after requireAuth.
-export async function resolvePrincipal(req, res, next) {
-  try {
-    const p = await loadPrincipal(req.user);
-    req.role = p.role;
-    req.bakerId = p.bakerId;
-    req.customerId = p.customerId;
-    req.firstName = p.firstName;
-    req.lastName = p.lastName;
-    req.capabilities = p.capabilities;
-    next();
-  } catch (err) {
-    next(err);
-  }
+// Load the principal onto req ONCE (idempotent). Run after requireAuth. Shared by every guard
+// below so the field-set never drifts (one place attaches req.role/bakerId/isAdmin/capabilities).
+async function ensurePrincipal(req) {
+  if (req.capabilities !== undefined) return;
+  const p = await loadPrincipal(req.user);
+  req.role = p.role;
+  req.bakerId = p.bakerId;
+  req.customerId = p.customerId;
+  req.firstName = p.firstName;
+  req.lastName = p.lastName;
+  req.isAdmin = p.isAdmin;
+  req.capabilities = p.capabilities;
 }
 
-// Guard: requires a specific capability. Run after requireAuth; lazily resolves
-// the principal if resolvePrincipal hasn't already, so routes can use it directly:
+// Middleware: attach req.role / req.bakerId / req.capabilities. Run after requireAuth.
+export async function resolvePrincipal(req, res, next) {
+  try { await ensurePrincipal(req); next(); } catch (err) { next(err); }
+}
+
+// Guard: requires a specific capability. Run after requireAuth; lazily resolves the principal:
 //   router.post('/x', requireAuth, requireCapability('customer:manage'), handler)
 export function requireCapability(cap) {
   return async (req, res, next) => {
     try {
-      if (req.capabilities === undefined) {
-        const p = await loadPrincipal(req.user);
-        req.role = p.role;
-        req.bakerId = p.bakerId;
-        req.customerId = p.customerId;
-        req.firstName = p.firstName;
-        req.lastName = p.lastName;
-        req.capabilities = p.capabilities;
-      }
+      await ensurePrincipal(req);
       if (hasCapability(req.capabilities, cap)) return next();
       return res.status(403).json({ error: 'Forbidden', missing: cap });
     } catch (err) {
       next(err);
     }
   };
+}
+
+// Boundary guard: requires an INTERNAL admin principal (a row in `admins`, role admin/admin_staff),
+// NOT merely someone who happens to hold an admin capability. Mounted ONCE at the `/api/admin`
+// prefix (see server.js) so every admin route is gated at the boundary — a route can't forget it.
+// Run after requireAuth. Per-route requireCapability still applies on top for finer grants.
+export async function requireAdmin(req, res, next) {
+  try {
+    await ensurePrincipal(req);
+    if (req.isAdmin) return next();
+    return res.status(403).json({ error: 'Forbidden' });
+  } catch (err) {
+    next(err);
+  }
 }

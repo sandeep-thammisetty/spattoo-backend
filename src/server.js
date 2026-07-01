@@ -23,6 +23,8 @@ import texturesRouter from './routes/textures.js';
 import materialsRouter from './routes/materials.js';
 import { requestId } from './middleware/requestId.js';
 import { errorHandler } from './middleware/errorHandler.js';
+import { requireAuth } from './middleware/auth.js';
+import { requireAdmin } from './middleware/rbac.js';
 
 const app = express();
 
@@ -35,6 +37,13 @@ app.post('/api/billing/webhook', express.raw({ type: 'application/json' }));
 app.post('/api/webhooks/meshy',  express.raw({ type: 'application/json' }));
 
 app.use(express.json({ limit: '5mb' }));
+
+// ADMIN BOUNDARY (SEC-0a): every `/api/admin/*` route is gated here, at the mount, before the
+// routers that define them — so an admin route can NEVER be exposed by forgetting a per-route guard.
+// requireAdmin = an internal admin principal (a row in `admins`), not merely an admin capability.
+// Per-route requireCapability(...) still applies on top for finer-grained grants. Keep privileged
+// routes under `/api/admin` so this backstop covers them (enforced by `npm run check:admin-routes`).
+app.use('/api/admin', requireAuth, requireAdmin);
 
 app.use(healthRouter);
 app.use('/api', jobsRouter);

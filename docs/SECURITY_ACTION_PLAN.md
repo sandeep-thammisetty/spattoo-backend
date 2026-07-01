@@ -58,15 +58,20 @@ forget — see SEC-1, SEC-11). The RBAC model is sound: a separate `admins` tabl
   customers can no longer reach this route → IDOR closed. (Chose admin-gating over per-row ownership
   checks because there is no legitimate baker/customer caller.)
 
-- [ ] **SEC-3 — Unescaped user data in transactional emails (stored, cross-tenant injection).**
-  `src/jobs/processors/sendNotification.js`, `src/services/email.js` — customer/baker-controlled fields
-  (names, address, `special_instructions`, quote "talk to baker" message, and URLs into `src=`/`href=`)
-  are interpolated into email HTML **without escaping**, though an `esc()` helper exists in
-  `sendNotification.js:17` (used only for the invite template). A customer injects HTML into the baker's
-  inbox (and vice-versa): in-brand phishing links, layout/CSS hijack, tracking pixels.
-  **Fix:** run every interpolated value through `esc()` in `orderDetailsHtml` + all `buildEmail`
-  branches and in `email.js`; for URL attributes, escape **and** allowlist the scheme
-  (`https:`/bucket origin) so `javascript:`/`data:` can't be injected.
+- [x] **SEC-3 — Unescaped user data in transactional emails (stored, cross-tenant injection). ✅ DONE.**
+  Customer/baker-controlled fields (names, address, `special_instructions`, quote "talk to baker"
+  message, quote note, and URLs into `src=`/`href=`) were interpolated into email HTML **without
+  escaping** (an `esc()` helper existed but was used only for the invite template). A customer could
+  inject HTML into the baker's inbox (and vice-versa): in-brand phishing links, layout/CSS hijack,
+  tracking pixels. **Fix:**
+  - `src/jobs/processors/sendNotification.js` — every interpolated value in `orderDetailsHtml` + all
+    `buildEmail` branches now runs through `esc()`. Added `escUrl()` (escapes **and** allowlists the
+    scheme — only absolute `http(s)` passes) for every `href`/`src` (thumbnail, photos, storefront/quote
+    links), so `javascript:`/`data:` can't be injected. Subjects left as plain text (nodemailer encodes
+    headers; escaping would show literal entities).
+  - `src/services/email.js` — the unescaped `sendOrderEmails`/`orderDetailsHtml` were **dead code**
+    (superseded by the notifications outbox; nothing imported them) → removed (also drops a DRY
+    duplicate). The one live export, `sendStaffWelcomeEmail`, now `esc()`s the staff name + bakery name.
 
 - [ ] **SEC-4 — No rate limiting anywhere (abuse / brute-force / enumeration).**
   No limiter on any route. `POST /api/invite/:id/send-otp` (public) → SMS/email OTP spam + cost;

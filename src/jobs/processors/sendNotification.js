@@ -18,6 +18,16 @@ function esc(s) {
   return String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 }
 
+// URL-safe escaping for href/src attributes (SEC-3). Escapes AND allowlists the scheme:
+// only absolute http(s) URLs pass (our storefront links + R2 public assets are all https),
+// so an injected `javascript:`/`data:` value can never reach an attribute. Anything else
+// yields '' → the attribute renders empty instead of executing.
+function escUrl(raw) {
+  const s = String(raw ?? '').trim();
+  if (!/^https?:\/\//i.test(s)) return '';
+  return esc(s);
+}
+
 // Branded, email-client-safe (table layout, inline styles) invite email. Returns
 // { subject, text, html }. Kept here (with the other notification templates) so the
 // invite flows through the same durable outbox pipeline as every other email.
@@ -93,8 +103,8 @@ function orderDetailsHtml(p) {
   return `<table style="width:100%;border-collapse:collapse;font-family:sans-serif;font-size:14px;color:#333">
     ${rows.map(([label, value]) => `
       <tr>
-        <td style="padding:6px 0;color:#888;width:160px">${label}</td>
-        <td style="padding:6px 0">${value}</td>
+        <td style="padding:6px 0;color:#888;width:160px">${esc(label)}</td>
+        <td style="padding:6px 0">${esc(value)}</td>
       </tr>`).join('')}
   </table>`;
 }
@@ -107,8 +117,9 @@ function rawEmail(from) {
 function buildEmail(typeSlug, recipientEmail, payload) {
   const p = payload;
 
-  const thumbnailHtml = p.thumbnailUrl
-    ? `<img src="${p.thumbnailUrl}" alt="Cake design" style="display:block;max-width:100%;border-radius:8px;margin:16px 0" />`
+  const thumbUrl = escUrl(p.thumbnailUrl);
+  const thumbnailHtml = thumbUrl
+    ? `<img src="${thumbUrl}" alt="Cake design" style="display:block;max-width:100%;border-radius:8px;margin:16px 0" />`
     : '';
 
   if (typeSlug === 'order_placed_baker') {
@@ -118,7 +129,7 @@ function buildEmail(typeSlug, recipientEmail, payload) {
       subject: `New quote request — ${p.customerName}`,
       html: `<div style="font-family:sans-serif;max-width:560px;margin:0 auto">
         <h2 style="color:#2C4433">New quote request</h2>
-        <p>You have a new cake quote request from <b>${p.customerName}</b>. Review the design and send them a quote.</p>
+        <p>You have a new cake quote request from <b>${esc(p.customerName)}</b>. Review the design and send them a quote.</p>
         ${thumbnailHtml}
         ${orderDetailsHtml(p)}
         <p style="margin-top:24px;color:#888;font-size:12px">Log in to your Spattoo dashboard to review and quote this request.</p>
@@ -136,7 +147,7 @@ function buildEmail(typeSlug, recipientEmail, payload) {
       subject: `Your cake request was sent to ${p.bakerName}`,
       html: `<div style="font-family:sans-serif;max-width:560px;margin:0 auto">
         <h2 style="color:#2C4433">Request sent!</h2>
-        <p>Hi ${p.customerFirstName}, thanks for designing your cake with <b>${p.bakerName}</b>. Your request has been sent — <b>${p.bakerName}</b> will review your design and get back to you with a quote. Here's what you requested:</p>
+        <p>Hi ${esc(p.customerFirstName)}, thanks for designing your cake with <b>${esc(p.bakerName)}</b>. Your request has been sent — <b>${esc(p.bakerName)}</b> will review your design and get back to you with a quote. Here's what you requested:</p>
         ${thumbnailHtml}
         ${orderDetailsHtml(p)}
         <p style="margin-top:24px">We'll email you as soon as your quote is ready. If you have any questions, contact your baker directly.</p>
@@ -158,11 +169,11 @@ function buildEmail(typeSlug, recipientEmail, payload) {
         : `${p.bakerName} updated your cake design`,
       html: `<div style="font-family:sans-serif;max-width:560px;margin:0 auto">
         <h2 style="color:#2C4433">${isReco ? 'A few ideas for your cake' : 'Your design was updated'}</h2>
-        <p>Hi ${p.customerFirstName}, <b>${p.bakerName}</b> ${isReco
+        <p>Hi ${esc(p.customerFirstName)}, <b>${esc(p.bakerName)}</b> ${isReco
           ? 'has suggested some changes to your cake design'
           : 'has updated your cake design'}. Open the designer to take a look — you can keep refining it yourself.</p>
         ${thumbnailHtml}
-        ${link ? `<p style="margin-top:24px"><a href="${link}" style="display:inline-block;background:#2C4433;color:#fff;text-decoration:none;padding:12px 28px;border-radius:10px;font-weight:700">View your design</a></p>` : ''}
+        ${link ? `<p style="margin-top:24px"><a href="${escUrl(link)}" style="display:inline-block;background:#2C4433;color:#fff;text-decoration:none;padding:12px 28px;border-radius:10px;font-weight:700">View your design</a></p>` : ''}
         <p style="color:#888;font-size:12px;margin-top:24px">Powered by Spattoo</p>
       </div>`,
     };
@@ -173,26 +184,26 @@ function buildEmail(typeSlug, recipientEmail, payload) {
     // storefront root.
     const base = p.bakerSlug ? config.storefront.urlTemplate.replace('{slug}', p.bakerSlug) : null;
     const link = base && p.orderId ? `${base.replace(/\/+$/, '')}/orders/${p.orderId}` : base;
-    const priceLine = p.quotedPrice != null ? `Your quote: <b>₹${p.quotedPrice}</b>` : "Your quote is ready";
+    const priceLine = p.quotedPrice != null ? `Your quote: <b>₹${esc(p.quotedPrice)}</b>` : "Your quote is ready";
     const advanceLine = p.advanceAmount != null
-      ? `<p style="font-size:14px;color:#444">Advance to confirm: <b>₹${p.advanceAmount}</b></p>` : "";
+      ? `<p style="font-size:14px;color:#444">Advance to confirm: <b>₹${esc(p.advanceAmount)}</b></p>` : "";
     const validLine = p.quoteValidUntil
       ? `<p style="color:#888;font-size:13px">Valid until ${formatDate(p.quoteValidUntil)}.</p>`
       : "";
     const noteLine = p.quoteNote
-      ? `<p style="background:#f6f4ef;border-radius:8px;padding:12px 14px;font-style:italic;color:#444">&ldquo;${p.quoteNote}&rdquo; — ${p.bakerName}</p>` : "";
+      ? `<p style="background:#f6f4ef;border-radius:8px;padding:12px 14px;font-style:italic;color:#444">&ldquo;${esc(p.quoteNote)}&rdquo; — ${esc(p.bakerName)}</p>` : "";
     return {
       from:    `${p.bakerName} <${rawEmail(config.smtp.from)}>`,
       to:      recipientEmail,
       subject: `${p.bakerName} sent you a quote`,
       html: `<div style="font-family:sans-serif;max-width:560px;margin:0 auto">
         <h2 style="color:#2C4433">Your quote is ready</h2>
-        <p>Hi ${p.customerFirstName}, <b>${p.bakerName}</b> has priced your cake.</p>
+        <p>Hi ${esc(p.customerFirstName)}, <b>${esc(p.bakerName)}</b> has priced your cake.</p>
         <p style="font-size:16px">${priceLine}</p>
         ${advanceLine}
         ${validLine}
         ${noteLine}
-        ${link ? `<p style="margin-top:24px"><a href="${link}" style="display:inline-block;background:#2C4433;color:#fff;text-decoration:none;padding:12px 28px;border-radius:10px;font-weight:700">Review your quote</a></p>` : ''}
+        ${link ? `<p style="margin-top:24px"><a href="${escUrl(link)}" style="display:inline-block;background:#2C4433;color:#fff;text-decoration:none;padding:12px 28px;border-radius:10px;font-weight:700">Review your quote</a></p>` : ''}
         <p style="color:#888;font-size:12px;margin-top:24px">Powered by Spattoo</p>
       </div>`,
     };
@@ -205,7 +216,7 @@ function buildEmail(typeSlug, recipientEmail, payload) {
       subject: `Quote approved — ${p.customerName || 'a customer'}`,
       html: `<div style="font-family:sans-serif;max-width:560px;margin:0 auto">
         <h2 style="color:#2C4433">Quote approved</h2>
-        <p><b>${p.customerName || 'A customer'}</b> is happy with your quote${p.finalPrice != null ? ` of <b>₹${p.finalPrice}</b>` : ''}. Collect the advance and confirm the order to lock it in.</p>
+        <p><b>${esc(p.customerName || 'A customer')}</b> is happy with your quote${p.finalPrice != null ? ` of <b>₹${esc(p.finalPrice)}</b>` : ''}. Collect the advance and confirm the order to lock it in.</p>
         <p style="margin-top:24px;color:#888;font-size:12px">Open your Spattoo dashboard to confirm.</p>
       </div>`,
     };
@@ -218,8 +229,8 @@ function buildEmail(typeSlug, recipientEmail, payload) {
       subject: `Question on your quote — ${p.customerName || 'a customer'}`,
       html: `<div style="font-family:sans-serif;max-width:560px;margin:0 auto">
         <h2 style="color:#2C4433">A question on your quote</h2>
-        <p><b>${p.customerName || 'A customer'}</b> has a question about the quote you sent:</p>
-        <p style="background:#f6f4ef;border-radius:8px;padding:12px 14px;font-style:italic;color:#444">&ldquo;${p.message}&rdquo;</p>
+        <p><b>${esc(p.customerName || 'A customer')}</b> has a question about the quote you sent:</p>
+        <p style="background:#f6f4ef;border-radius:8px;padding:12px 14px;font-style:italic;color:#444">&ldquo;${esc(p.message)}&rdquo;</p>
         <p style="margin-top:24px;color:#888;font-size:12px">Reply by revising the quote in your dashboard, or reach out to them directly.</p>
       </div>`,
     };
@@ -231,8 +242,8 @@ function buildEmail(typeSlug, recipientEmail, payload) {
       to:      recipientEmail,
       subject: `Your order is confirmed by ${p.bakerName}!`,
       html: `<div style="font-family:sans-serif;max-width:560px;margin:0 auto">
-        <h2 style="color:#2C4433">Your order is confirmed by ${p.bakerName}</h2>
-        <p>Hi ${p.customerFirstName}, <b>${p.bakerName}</b> has confirmed your order${p.finalPrice != null ? ` (<b>₹${p.finalPrice}</b>)` : ''} — it's all set, they're on it!</p>
+        <h2 style="color:#2C4433">Your order is confirmed by ${esc(p.bakerName)}</h2>
+        <p>Hi ${esc(p.customerFirstName)}, <b>${esc(p.bakerName)}</b> has confirmed your order${p.finalPrice != null ? ` (<b>₹${esc(p.finalPrice)}</b>)` : ''} — it's all set, they're on it!</p>
         ${thumbnailHtml}
         <p style="color:#888;font-size:12px;margin-top:24px">Powered by Spattoo</p>
       </div>`,
@@ -247,7 +258,7 @@ function buildEmail(typeSlug, recipientEmail, payload) {
     const photoUrls = Array.isArray(p.photoUrls) ? p.photoUrls.filter(Boolean) : [];
     const photosHtml = photoUrls.length
       ? `<p style="font-size:14px;color:#444;margin:16px 0 8px">Here's how it turned out:</p>` +
-        photoUrls.map(u => `<img src="${u}" alt="Your finished cake" style="display:block;max-width:100%;border-radius:8px;margin:0 0 10px" />`).join('')
+        photoUrls.map(u => escUrl(u)).filter(Boolean).map(u => `<img src="${u}" alt="Your finished cake" style="display:block;max-width:100%;border-radius:8px;margin:0 0 10px" />`).join('')
       : thumbnailHtml;
     return {
       from:    `${p.bakerName} <${rawEmail(config.smtp.from)}>`,
@@ -255,7 +266,7 @@ function buildEmail(typeSlug, recipientEmail, payload) {
       subject: `Your order from ${p.bakerName} is ready!`,
       html: `<div style="font-family:sans-serif;max-width:560px;margin:0 auto">
         <h2 style="color:#2C4433">Your order is ready</h2>
-        <p>Hi ${p.customerFirstName}, your cake from <b>${p.bakerName}</b> is ready${isDelivery ? ` for delivery${when}` : ` for pickup${when}`}!</p>
+        <p>Hi ${esc(p.customerFirstName)}, your cake from <b>${esc(p.bakerName)}</b> is ready${isDelivery ? ` for delivery${esc(when)}` : ` for pickup${esc(when)}`}!</p>
         ${photosHtml}
         <p style="color:#888;font-size:12px;margin-top:24px">Powered by Spattoo</p>
       </div>`,
@@ -270,9 +281,9 @@ function buildEmail(typeSlug, recipientEmail, payload) {
       subject: `Thank you from ${p.bakerName}!`,
       html: `<div style="font-family:sans-serif;max-width:560px;margin:0 auto">
         <h2 style="color:#2C4433">Your order is complete</h2>
-        <p>Hi ${p.customerFirstName}, your cake order from <b>${p.bakerName}</b> is complete — we hope it made the moment special!</p>
+        <p>Hi ${esc(p.customerFirstName)}, your cake order from <b>${esc(p.bakerName)}</b> is complete — we hope it made the moment special!</p>
         ${thumbnailHtml}
-        <p style="margin-top:16px">Thank you for ordering.${base ? ` Design another anytime with <a href="${base}" style="color:#2C4433;font-weight:700">${p.bakerName}</a>.` : ''}</p>
+        <p style="margin-top:16px">Thank you for ordering.${base ? ` Design another anytime with <a href="${escUrl(base)}" style="color:#2C4433;font-weight:700">${esc(p.bakerName)}</a>.` : ''}</p>
         <p style="color:#888;font-size:12px;margin-top:24px">Powered by Spattoo</p>
       </div>`,
     };

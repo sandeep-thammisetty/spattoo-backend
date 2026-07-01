@@ -168,6 +168,16 @@ forget — see SEC-1, SEC-11). The RBAC model is sound: a separate `admins` tabl
 - [ ] **SEC-14 — Shared `assertBakerOwns(table, id)` helper.** The "look up `baker_id` from the token,
   then `.eq('baker_id', …)`" pattern is duplicated ~30×; that duplication is where SEC-2/SEC-7 slipped in.
   One shared helper both reduces risk and matches the project-wide DRY/reuse invariant (root `CLAUDE.md`).
+- [ ] **SEC-17 — Edge / DDoS protection (infra layer). 🗓️ FUTURE — not addressed now.** SEC-4's app-level
+  rate limiting is a per-actor **abuse/cost/fraud** control, NOT DDoS defense: the limiter runs *inside*
+  Node (after TCP/TLS + parse + a Redis round-trip, then returns 429), so a flood still burns compute /
+  connections / bandwidth / Redis ops; L3–L4 volumetric floods never reach the app at all; distributed
+  many-IP floods slip under per-IP caps; and the limiter **fails open** if Redis saturates. DDoS must be
+  mitigated at the **edge, before traffic reaches origin**: proxy the API hostname through **Cloudflare**
+  (already used for R2) and enable WAF + L3/4 mitigation + bot management + edge rate-limit rules +
+  challenge pages; keep origin hygiene (the existing 5 MB body cap + sane request timeouts). Complementary
+  layer to SEC-4, not covered by it. **Deferred to a future infra/hardening pass (pre-scale-up), not part
+  of the current app-code security sweep.**
 
 ---
 

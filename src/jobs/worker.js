@@ -3,11 +3,13 @@ import { connection } from './queue.js';
 import { extractImage } from './processors/extractImage.js';
 import { autoTag } from './processors/autoTag.js';
 import { sendNotification } from './processors/sendNotification.js';
+import { removeLogoBg } from './processors/removeLogoBg.js';
 
 const processors = {
   extract_image:     extractImage,
   auto_tag:          autoTag,
   send_notification: sendNotification,
+  remove_logo_bg:    removeLogoBg,
 };
 
 export function startWorker() {

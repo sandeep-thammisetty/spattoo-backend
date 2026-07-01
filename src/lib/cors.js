@@ -16,7 +16,9 @@ export function isAllowedOrigin(origin, cors = config.cors) {
   try { url = new URL(origin); } catch { return false; }
   const host = url.hostname;
 
-  if (cors.allowLocalhost && (host === 'localhost' || host === '127.0.0.1')) return true;
+  // Local dev (http, any port) — bare localhost/127.0.0.1 AND *.localhost subdomain storefronts
+  // (the `{slug}.localhost:5173` model). Gated by env so prod can turn it off.
+  if (cors.allowLocalhost && (host === 'localhost' || host === '127.0.0.1' || host.endsWith('.localhost'))) return true;
   if (cors.extraOrigins.includes(origin)) return true;
 
   // Real origins must be https and inside the base domain — apex OR any subdomain. The leading dot in

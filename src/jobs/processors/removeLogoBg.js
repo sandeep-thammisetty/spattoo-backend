@@ -1,3 +1,4 @@
+import sharp from 'sharp';
 import { getObjectBuffer, putObject } from '../../services/r2.js';
 import { removeBackground } from '../../services/removebg.js';
 import { supabase } from '../../services/supabase.js';
@@ -17,9 +18,15 @@ export async function removeLogoBg({ bakerId, logoKey }) {
   if (!bakerId || !logoKey) return;
   try {
     const input = await getObjectBuffer(logoKey);
-    const cutout = await removeBackground(input);
-    const transparentKey = `${logoKey.replace(/\.[^./]+$/, '')}-nobg.png`;
-    await putObject(transparentKey, cutout, 'image/png');
+    const cutout = await removeBackground(input);   // remove.bg → transparent PNG
+    // Re-encode as lossless WebP (smaller than PNG, keeps alpha + crisp logo edges) and bound the
+    // size — a logo never needs to be huge (displays ~30px tall, so 640px covers retina).
+    const webp = await sharp(cutout)
+      .resize({ width: 640, height: 640, fit: 'inside', withoutEnlargement: true })
+      .webp({ lossless: true })
+      .toBuffer();
+    const transparentKey = `${logoKey.replace(/\.[^./]+$/, '')}-nobg.webp`;
+    await putObject(transparentKey, webp, 'image/webp');
     const { error } = await supabase
       .from('bakers')
       .update({ logo_transparent_key: transparentKey })

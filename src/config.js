@@ -68,5 +68,17 @@ export const config = {
   //   dev:  http://{slug}.localhost:5173
   //   prod: https://{slug}.spattoo.com
   storefront: { urlTemplate: process.env.STOREFRONT_URL_TEMPLATE || 'https://{slug}.spattoo.com' },
+  // SEC-8 — CORS allowlist. `baseDomain` is derived from the storefront template so ALL storefront
+  // subdomains ({slug}.<base>) + app/marketing match ONE wildcard rule (O(1) in tenants, never a
+  // per-baker list). Override with CORS_BASE_DOMAIN if the API host differs. `allowLocalhost` keeps
+  // local dev + the local admin tool working; set CORS_ALLOW_LOCALHOST=false to harden prod.
+  // `extraOrigins` (CORS_ALLOWED_ORIGINS, comma-separated) is for any one-off exact origins.
+  cors: {
+    baseDomain: process.env.CORS_BASE_DOMAIN
+      || (process.env.STOREFRONT_URL_TEMPLATE || 'https://{slug}.spattoo.com')
+           .replace('{slug}.', '').replace(/^https?:\/\//, '').replace(/[:/].*$/, ''),
+    allowLocalhost: process.env.CORS_ALLOW_LOCALHOST !== 'false',
+    extraOrigins: (process.env.CORS_ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean),
+  },
   port:     parseInt(process.env.PORT || '3000', 10),
 };

@@ -25,6 +25,7 @@ import { requestId } from './middleware/requestId.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { requireAuth } from './middleware/auth.js';
 import { requireAdmin } from './middleware/rbac.js';
+import { corsOptions } from './lib/cors.js';
 
 const app = express();
 
@@ -33,7 +34,7 @@ const app = express();
 // per-IP rate limiting (SEC-4); without this every request would look like the proxy's single IP.
 app.set('trust proxy', 1);
 
-app.use(cors());
+app.use(cors(corsOptions()));   // SEC-8: allowlist our own origins, not `*`
 app.use(requestId);   // correlation id on every request — must run first
 
 // Webhooks need the raw body (signature verification / unsigned-but-verified-by-refetch) —

@@ -138,11 +138,22 @@ forget — see SEC-1, SEC-11). The RBAC model is sound: a separate `admins` tabl
   on SEC-14. Branch behaviour unit-verified (baker/customer → own+global, no-tenant → global, admin →
   unrestricted).
 
-- [ ] **SEC-8 — Wide-open CORS.**
-  `src/server.js:29` `app.use(cors())` reflects `*`. Not credentialed-CORS ATO (Bearer auth), but it lets
-  any site script the full API (amplifies SEC-4).
-  **Fix:** allowlist known origins (`app.spattoo.dev`, `*.spattoo.com`/`*.spattoo.dev`, admin) via
-  `cors({ origin: fn })`.
+- [x] **SEC-8 — Wide-open CORS. ✅ DONE.**
+  Was: `app.use(cors())` reflected `*` → any site could script the API from a browser (not ATO — Bearer
+  auth, no cookies — but a removed defense layer that amplified SEC-4). **Fix:** `app.use(cors(corsOptions()))`
+  with a config-derived allowlist (`src/lib/cors.js` + `config.cors`):
+  - Allowed = apex + **any subdomain** of `baseDomain` over **https** (one wildcard rule → every
+    `{slug}.<base>` storefront + `app`/marketing hosts; **O(1) in tenants**, no per-baker list). Leading-dot
+    match blocks suffix spoofing (`evil-spattoo.com`, `spattoo.com.attacker.com`).
+  - `baseDomain` auto-derives from `STOREFRONT_URL_TEMPLATE` (override: `CORS_BASE_DOMAIN`).
+  - Requests with **no Origin** (curl/server-to-server/native webview/same-origin) allowed — CORS only
+    governs cross-origin browser calls, and browsers set Origin honestly.
+  - `CORS_ALLOW_LOCALHOST` (default on → keeps local dev + the local admin tool working; set `=false`
+    to harden prod) and `CORS_ALLOWED_ORIGINS` (comma list) for one-off exacts.
+  - Baker custom domains (deferred) will add a DB-verified dynamic branch here, not a wildcard.
+  Allowlist unit-verified (15 cases: apex/www/app/{slug} pass; attacker + suffix-spoof + non-https +
+  garbage fail; localhost gated by env). **Env to set:** dev Render `STOREFRONT_URL_TEMPLATE` →
+  `https://{slug}.spattoo.dev` (or `CORS_BASE_DOMAIN=spattoo.dev`); prod → set `CORS_ALLOW_LOCALHOST=false`.
 
 - [x] **SEC-9 — Raw internal error messages leaked to clients. ✅ DONE.**
   Was: **228** route sites (far more than the "~20" first estimate) did `res.status(500).json({ error:

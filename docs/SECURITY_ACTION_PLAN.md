@@ -73,12 +73,22 @@ forget — see SEC-1, SEC-11). The RBAC model is sound: a separate `admins` tabl
     (superseded by the notifications outbox; nothing imported them) → removed (also drops a DRY
     duplicate). The one live export, `sendStaffWelcomeEmail`, now `esc()`s the staff name + bakery name.
 
-- [ ] **SEC-4 — No rate limiting anywhere (abuse / brute-force / enumeration).**
-  No limiter on any route. `POST /api/invite/:id/send-otp` (public) → SMS/email OTP spam + cost;
-  `verify-otp` has no app-level attempt cap; `GET /api/bakers/phone-available` is a phone-enumeration
-  oracle; `/bakers/self` enables trial-farming.
-  **Fix:** add a Redis-backed limiter (Redis already present) — tight per-IP/per-key caps on the OTP
-  endpoints, signup, and the `-available` endpoints; add a per-invite verify-attempt lockout.
+- [x] **SEC-4 — No rate limiting anywhere (abuse / brute-force / enumeration). ✅ DONE.**
+  Was: no limiter on any route → OTP spam/cost, no verify attempt cap, phone-enumeration oracle,
+  trial-farming. **Fix:** added a reusable Redis-backed fixed-window limiter
+  (`src/middleware/rateLimit.js` — one factory, applied per-route; atomic incr+expire via Lua;
+  **fails open** on Redis error so it can never take the site down) and set `trust proxy: 1` in
+  `server.js` so `req.ip` is the real client behind Render's proxy. Applied:
+  - `POST /invite/:id/send-otp` → 5 / 10 min **per invite** + 30 / 10 min per IP (keyed on the invite
+    id = the real abuse unit, so it holds behind shared IPs and can't be dodged by rotating IPs).
+  - `POST /invite/:id/verify-otp` → 10 / 10 min per invite (brute-force cap).
+  - `GET /bakers/slug-available`, `GET /bakers/phone-available` → 120 / min per IP (generous vs. the
+    debounced typing use; stops mass enumeration).
+  - `POST /bakers/self` → 10 / hour per user (anti trial-farming; idempotent anyway).
+  Limits are well above real usage → no legitimate flow breaks. Behaviour unit-verified (under-limit
+  passes, over-limit → 429 + `Retry-After`, per-key isolation, null-key skip, Redis-error fail-open).
+  _(Not covered, optional follow-up: `POST /baker/customers/invite` is authed + capability-gated but
+  sends emails — could get a per-baker cap later.)_
 
 ---
 

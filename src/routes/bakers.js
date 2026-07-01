@@ -7,6 +7,7 @@ import { enqueueOptimizePhoto } from '../jobs/processors/optimizePhoto.js';
 import { optimizeImageToWebp } from '../services/imageOptimize.js';
 import { requireAuth } from '../middleware/auth.js';
 import { requireCapability, resolveCustomer } from '../middleware/rbac.js';
+import { rateLimit } from '../middleware/rateLimit.js';
 import { config } from '../config.js';
 import { logSubscriptionEvent, deriveSubscription } from './subscriptions.js';
 import { PLAN }                from '../constants/subscriptionPlans.js';
@@ -100,9 +101,21 @@ router.post('/admin/bakers', requireAuth, requireCapability('baker:onboard'), as
   }
 });
 
+// SEC-4 — rate limits for the public self-signup surface.
+// Availability checks fire as the user types (debounced) → generous per-IP ceiling that a real
+// user never reaches but mass enumeration does. self-signup is per-user (idempotent anyway).
+const availabilityLimit = rateLimit({
+  name: 'signup-available', limit: 120, windowSec: 60, key: req => req.ip,
+  message: 'Too many checks. Please slow down and try again shortly.',
+});
+const selfSignupLimit = rateLimit({
+  name: 'baker-self', limit: 10, windowSec: 3600, key: req => req.user?.id || req.ip,
+  message: 'Too many attempts. Please try again later.',
+});
+
 // ── GET /api/bakers/slug-available?slug= ──────────────────────────────────────
 // Public: live availability check for the self-signup storefront-address field.
-router.get('/bakers/slug-available', async (req, res) => {
+router.get('/bakers/slug-available', availabilityLimit, async (req, res) => {
   try {
     const slug = normalizeSlug(req.query.slug);
     if (!slug || !isValidSlug(slug)) return res.json({ slug, available: false, reason: 'invalid' });
@@ -120,7 +133,7 @@ router.get('/bakers/slug-available', async (req, res) => {
 // Enumeration-light: returns only available true/false, never the owning baker.
 // The AUTHORITATIVE checks remain POST /api/bakers/self + the DB unique index — this
 // is UX only (a client can skip it; the server-side path still rejects).
-router.get('/bakers/phone-available', async (req, res) => {
+router.get('/bakers/phone-available', availabilityLimit, async (req, res) => {
   try {
     const norm = normalizePhone(req.query.phone, req.query.country);
     if (!norm.ok) return res.json({ available: false, reason: 'invalid' });
@@ -137,7 +150,7 @@ router.get('/bakers/phone-available', async (req, res) => {
 // First/last name + phone come from the signup metadata (collected on the signup
 // screen, stored in user_metadata); the slug is generated server-side from the
 // bakery name (never user-chosen — see generateUniqueSlug). Body: { name }.
-router.post('/bakers/self', requireAuth, async (req, res) => {
+router.post('/bakers/self', requireAuth, selfSignupLimit, async (req, res) => {
   try {
     const { data: existingUser } = await supabase
       .from('baker_appusers').select('baker_id').eq('auth_user_id', req.user.id).maybeSingle();

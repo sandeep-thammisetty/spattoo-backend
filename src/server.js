@@ -28,6 +28,11 @@ import { requireAdmin } from './middleware/rbac.js';
 
 const app = express();
 
+// Render (and any managed host) terminates TLS at a proxy and forwards the real client IP in
+// X-Forwarded-For. Trust exactly ONE hop so `req.ip` is the actual client — required for correct
+// per-IP rate limiting (SEC-4); without this every request would look like the proxy's single IP.
+app.set('trust proxy', 1);
+
 app.use(cors());
 app.use(requestId);   // correlation id on every request — must run first
 

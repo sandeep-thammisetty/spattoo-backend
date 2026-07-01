@@ -2,8 +2,25 @@ import { Router } from 'express';
 import { supabase, supabaseAuth } from '../services/supabase.js';
 import { config } from '../config.js';
 import { getOrderAcceptance } from '../services/entitlements.js';
+import { rateLimit } from '../middleware/rateLimit.js';
 
 const router = Router();
+
+// SEC-4 — OTP abuse guards. Keyed on the INVITE ID (the real abuse unit — works behind shared IPs
+// and can't be dodged by rotating IPs), with a per-IP backstop on send (SMS/email cost).
+// Limits are generous vs. real use (a customer requests a code and maybe resends once).
+const sendOtpPerInvite = rateLimit({
+  name: 'otp-send-invite', limit: 5, windowSec: 600, key: req => req.params.id,
+  message: 'Too many code requests. Please wait a few minutes and try again.',
+});
+const sendOtpPerIp = rateLimit({
+  name: 'otp-send-ip', limit: 30, windowSec: 600, key: req => req.ip,
+  message: 'Too many code requests. Please wait a few minutes and try again.',
+});
+const verifyOtpPerInvite = rateLimit({
+  name: 'otp-verify-invite', limit: 10, windowSec: 600, key: req => req.params.id,
+  message: 'Too many attempts. Please wait a few minutes and request a new code.',
+});
 
 // Load an invite by id with its customer + baker, only if it's still VALID
 // (not expired/revoked). Returns { invite, customer, baker } or null.
@@ -177,7 +194,7 @@ router.get('/invite/:id', async (req, res) => {
 // ── POST /api/invite/:id/send-otp ─────────────────────────────────────────────
 // Server-side OTP send. The raw contact never leaves the server — the client
 // only knows the invite id + chosen channel. Body: { channel? } (default email).
-router.post('/invite/:id/send-otp', async (req, res) => {
+router.post('/invite/:id/send-otp', sendOtpPerInvite, sendOtpPerIp, async (req, res) => {
   try {
     if (!supabaseAuth) return res.status(503).json({ error: 'Auth not configured' });
     const invite = await loadValidInvite(req.params.id);
@@ -206,7 +223,7 @@ router.post('/invite/:id/send-otp', async (req, res) => {
 // ── POST /api/invite/:id/verify-otp ───────────────────────────────────────────
 // Verify the code server-side and return the Supabase session for the client to
 // adopt (supabase.auth.setSession). Body: { channel?, code }.
-router.post('/invite/:id/verify-otp', async (req, res) => {
+router.post('/invite/:id/verify-otp', verifyOtpPerInvite, async (req, res) => {
   try {
     if (!supabaseAuth) return res.status(503).json({ error: 'Auth not configured' });
     const invite = await loadValidInvite(req.params.id);

@@ -47,6 +47,7 @@ export async function deriveSubscription(bakerId) {
     period:     row.period_name ? { name: row.period_name, display_name: row.period_display_name } : null,
     end_date:   row.end_date,
     start_date: row.start_date,
+    cancel_at_period_end: row.cancel_at_period_end ?? false,
   };
 }
 

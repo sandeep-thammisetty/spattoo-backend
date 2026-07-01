@@ -117,10 +117,11 @@ router.get('/billing/status', requireAuth, requireCapability('billing:manage'), 
     const sub = await deriveSubscription(baker.id);
 
     res.json({
-      tier:            sub.plan?.name           ?? null,
-      status:          sub.status,
-      next_billing_at: sub.end_date             ?? null,
-      billing_period:  sub.period?.display_name ?? null,
+      tier:                 sub.plan?.name           ?? null,
+      status:               sub.status,
+      next_billing_at:      sub.end_date             ?? null,
+      billing_period:       sub.period?.display_name ?? null,
+      cancel_at_period_end: sub.cancel_at_period_end ?? false,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -181,9 +182,12 @@ router.post('/billing/subscribe', requireAuth, requireCapability('billing:manage
         billing_subscription_id: subscription.id,
       });
       // Don't fail silently — if the pending row didn't land, the webhook has nothing to
-      // activate. Surface it (the Razorpay sub is created but the baker will retry).
+      // activate. Roll back the just-created Razorpay subscription so it doesn't linger as
+      // an orphaned active sub (which would keep billing with no local record), then surface.
       if (parkErr) {
         console.error('[billing] park PENDING subscription row failed:', parkErr.message);
+        await razorpayCancelSubscription(subscription.id, false)
+          .catch(e => console.error('[billing] rollback of orphaned Razorpay sub failed:', e.message));
         return res.status(500).json({ error: `Could not start subscription: ${parkErr.message}` });
       }
 
@@ -246,19 +250,31 @@ router.post('/billing/cancel', requireAuth, requireCapability('billing:manage'),
 
     const current = await deriveSubscription(baker.id);
 
-    // Cancel at cycle end in Razorpay (keeps access until paid-through). Best-effort:
-    // a Razorpay error shouldn't block the local cancel. No-op without keys / no sub.
+    // Cancel at cycle end in Razorpay (keeps access until paid-through). AUTHORITATIVE:
+    // if Razorpay rejects it, we must NOT report success — otherwise the baker thinks
+    // they cancelled while Razorpay keeps charging. Surface the failure.
     if (razorpayEnabled() && baker.billing_subscription_id) {
-      await razorpayCancelSubscription(baker.billing_subscription_id, true)
-        .catch(err => console.error('[billing] Razorpay cancel failed:', err.message));
+      try {
+        await razorpayCancelSubscription(baker.billing_subscription_id, true);
+      } catch (err) {
+        console.error('[billing] Razorpay cancel failed:', err.message);
+        return res.status(502).json({
+          error: 'Could not cancel with the payment provider. Please try again.',
+          code:  'razorpay_cancel_failed',
+        });
+      }
     }
 
-    // Only flip the baker status — baker_subscriptions stays active until the cycle ends.
-    // A daily job handles expiring baker_subscriptions rows once end_date has passed.
-    // TODO: when Razorpay is live, the subscription.cancelled webhook will also update baker_subscriptions.
-    await supabase.from('bakers')
-      .update({ subscription_status_id: SUBSCRIPTION_STATUS.CANCELLED })
-      .eq('id', baker.id);
+    // Mark the CURRENT subscription row to end at period end — keep access (status stays
+    // active) until end_date; the subscription.cancelled webhook / daily expiry job flips
+    // it to cancelled at the cycle end. The billing UI reads cancel_at_period_end to show
+    // "won't renew" and hide the Cancel button. (baker_subscriptions is the source of
+    // truth; bakers.subscription_status_id is mirrored by the webhook at cycle end.)
+    const markQuery = supabase.from('baker_subscriptions').update({ cancel_at_period_end: true });
+    const { error: markErr } = baker.billing_subscription_id
+      ? await markQuery.eq('billing_subscription_id', baker.billing_subscription_id)
+      : await markQuery.eq('baker_id', baker.id).eq('status_id', SUBSCRIPTION_STATUS.ACTIVE);
+    if (markErr) return res.status(500).json({ error: markErr.message });
 
     await logSubscriptionEvent(baker.id, {
       event:          'cancelled',

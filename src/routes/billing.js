@@ -171,7 +171,7 @@ router.post('/billing/subscribe', requireAuth, requireCapability('billing:manage
         .update({ status_id: SUBSCRIPTION_STATUS.CANCELLED, end_date: today })
         .eq('baker_id', baker.id).in('status_id', [SUBSCRIPTION_STATUS.ACTIVE, SUBSCRIPTION_STATUS.PENDING]);
 
-      await supabase.from('baker_subscriptions').insert({
+      const { error: parkErr } = await supabase.from('baker_subscriptions').insert({
         baker_id:                baker.id,
         plan_id:                 planId,
         billing_period_id:       billing_period_id,
@@ -180,6 +180,12 @@ router.post('/billing/subscribe', requireAuth, requireCapability('billing:manage
         end_date:                null,
         billing_subscription_id: subscription.id,
       });
+      // Don't fail silently — if the pending row didn't land, the webhook has nothing to
+      // activate. Surface it (the Razorpay sub is created but the baker will retry).
+      if (parkErr) {
+        console.error('[billing] park PENDING subscription row failed:', parkErr.message);
+        return res.status(500).json({ error: `Could not start subscription: ${parkErr.message}` });
+      }
 
       await supabase.from('bakers').update({
         billing_subscription_id: subscription.id,
@@ -376,16 +382,21 @@ router.post('/billing/webhook', async (req, res) => {
     const razorpaySubId = sub?.id ?? payment?.subscription_id ?? null;
     if (!razorpaySubId) return res.json({ ok: true });
 
-    const { data: bakerRow } = await supabase
-      .from('bakers').select('id')
+    // Match the EXACT local row for this Razorpay subscription by its billing_subscription_id
+    // — NOT "the baker's most-recent non-cancelled row", which let a late event for a
+    // superseded sub mutate the wrong (current) row.
+    const { data: subRow, error: subLookupErr } = await supabase
+      .from('baker_subscriptions').select('id, baker_id, plan_id')
       .eq('billing_subscription_id', razorpaySubId).maybeSingle();
-    if (!bakerRow) return res.json({ ok: true });
-
-    const { data: subRow } = await supabase
-      .from('baker_subscriptions').select('id, plan_id')
-      .eq('baker_id', bakerRow.id).not('status_id', 'eq', SUBSCRIPTION_STATUS.CANCELLED)
-      .order('created_at', { ascending: false }).limit(1).maybeSingle();
+    if (subLookupErr) throw new Error(`sub lookup failed: ${subLookupErr.message}`);
     if (!subRow) return res.json({ ok: true });
+    const bakerId = subRow.baker_id;
+
+    // Only mirror status onto bakers when this IS the baker's current subscription, so a
+    // stale event for an old sub can't clobber the live status.
+    const { data: bakerRow } = await supabase
+      .from('bakers').select('billing_subscription_id').eq('id', bakerId).maybeSingle();
+    const isCurrent = bakerRow?.billing_subscription_id === razorpaySubId;
 
     const STATUS_MAP = {
       'subscription.activated': SUBSCRIPTION_STATUS.ACTIVE,
@@ -414,16 +425,21 @@ router.post('/billing/webhook', async (req, res) => {
       if (event === 'subscription.charged' && sub?.current_end) {
         subUpdate.end_date = new Date(sub.current_end * 1000).toISOString().slice(0, 10);
       }
-      await supabase.from('baker_subscriptions').update(subUpdate).eq('id', subRow.id);
-      await supabase.from('bakers')
-        .update({ subscription_status_id: newStatusId })
-        .eq('id', bakerRow.id);
+      // Error-checked: a failed write throws → 500 → Razorpay retries (no silent loss).
+      const { error: subUpdErr } = await supabase
+        .from('baker_subscriptions').update(subUpdate).eq('id', subRow.id);
+      if (subUpdErr) throw new Error(`baker_subscriptions update failed: ${subUpdErr.message}`);
+      if (isCurrent) {
+        const { error: bakerUpdErr } = await supabase.from('bakers')
+          .update({ subscription_status_id: newStatusId }).eq('id', bakerId);
+        if (bakerUpdErr) throw new Error(`bakers status update failed: ${bakerUpdErr.message}`);
+      }
     }
 
     // First activation (customer authorised payment) → record it in the subscription
     // history. subscribe() doesn't log for the paid flow, so the audit event lives here.
     if (event === 'subscription.activated') {
-      await logSubscriptionEvent(bakerRow.id, {
+      await logSubscriptionEvent(bakerId, {
         event:     'activated',
         newTier:   PLAN.NAME_BY_ID[subRow.plan_id] ?? null,
         newStatus: 'active',
@@ -431,20 +447,28 @@ router.post('/billing/webhook', async (req, res) => {
       }).catch(err => console.error('[billing] activation event log failed:', err.message));
     }
 
-    if (payment?.id && (event === 'subscription.charged' || event === 'payment.failed')) {
-      const paymentStatusId = event === 'subscription.charged' ? PAYMENT_STATUS.CAPTURED : PAYMENT_STATUS.FAILED;
-      await supabase.from('payments').upsert({
-        baker_id:                 bakerRow.id,
-        baker_subscription_id:    subRow?.id ?? null,
+    // Record the payment on activation AND charge (whichever carries the payment entity
+    // first) — onConflict makes it idempotent, so no duplicate. No longer hinges solely on
+    // subscription.charged arriving. Error-checked so a failed write can't vanish silently.
+    const PAYMENT_EVENT_STATUS = {
+      'subscription.activated': PAYMENT_STATUS.CAPTURED,
+      'subscription.charged':   PAYMENT_STATUS.CAPTURED,
+      'payment.failed':         PAYMENT_STATUS.FAILED,
+    };
+    if (payment?.id && PAYMENT_EVENT_STATUS[event] !== undefined) {
+      const { error: payErr } = await supabase.from('payments').upsert({
+        baker_id:                 bakerId,
+        baker_subscription_id:    subRow.id,
         razorpay_payment_id:      payment.id,
         razorpay_subscription_id: razorpaySubId,
         amount:                   payment.amount ?? 0,
         currency:                 payment.currency ?? 'INR',
-        status_id:                paymentStatusId,
+        status_id:                PAYMENT_EVENT_STATUS[event],
         charged_at:               payment.created_at
           ? new Date(payment.created_at * 1000).toISOString()
           : new Date().toISOString(),
       }, { onConflict: 'razorpay_payment_id', ignoreDuplicates: true });
+      if (payErr) throw new Error(`payments upsert failed: ${payErr.message}`);
     }
 
     res.json({ ok: true });

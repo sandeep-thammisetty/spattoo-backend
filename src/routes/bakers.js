@@ -114,6 +114,23 @@ router.get('/bakers/slug-available', async (req, res) => {
   }
 });
 
+// ── GET /api/bakers/phone-available?phone=&country= ───────────────────────────
+// Public: live "is this phone already a baker owner?" check for the self-signup
+// screen, so a duplicate phone is caught BEFORE the account + confirm email exist.
+// Enumeration-light: returns only available true/false, never the owning baker.
+// The AUTHORITATIVE checks remain POST /api/bakers/self + the DB unique index — this
+// is UX only (a client can skip it; the server-side path still rejects).
+router.get('/bakers/phone-available', async (req, res) => {
+  try {
+    const norm = normalizePhone(req.query.phone, req.query.country);
+    if (!norm.ok) return res.json({ available: false, reason: 'invalid' });
+    const conflict = await primaryOwnerConflict({ phone: norm.e164 });
+    return res.json({ available: !conflict, e164: norm.e164 });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── POST /api/bakers/self ─────────────────────────────────────────────────────
 // Baker self-signup completion (wizard step 1). Auth = the signed-up user's JWT.
 // Creates their baker on the free Spark tier. Idempotent: one baker per auth user.

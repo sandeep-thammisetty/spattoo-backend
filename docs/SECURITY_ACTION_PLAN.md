@@ -136,6 +136,17 @@ forget — see SEC-1, SEC-11). The RBAC model is sound: a separate `admins` tabl
   (`src/routes/billing.js:84, 87`). **Fix:** remove or env-gate.
 - [ ] **SEC-13 — Data bug (not security).** `src/routes/jobs.js:19` writes an auth-user UUID into the
   `baker_id` column. **Fix:** write the resolved `baker_id`.
+- [ ] **SEC-16 — Front-end URL-scheme sink (`href` without allowlist).** _(spattoo-core / spattoo-web,
+  not the API — logged here to keep one security ledger.)_ The React apps auto-escape all HTML bodies
+  (JSX; **no** `dangerouslySetInnerHTML`/`innerHTML` anywhere), so the SEC-3 stored-XSS class does **not**
+  exist outside email. The one residual gap is URL **schemes**: `spattoo-core/src/storefront/
+  CustomerStorefront.jsx:475` binds a baker-controlled `baker.website_url` to `href` with no scheme
+  check (React escapes the string but does not block `javascript:`), and the config-driven nav
+  `n.href` (`:243`, `:265`) is the same pattern if those hrefs are baker/admin-authored. Low severity
+  (baker-controlled → mostly self-XSS on the baker's own public storefront). Safe hardcoded-scheme
+  links (`tel:`/`wa.me/`/`instagram.com/`) are fine. **Fix:** a shared `safeHref(url)` helper
+  (https-only allowlist — the front-end analog of email's `escUrl`) at every stored-URL `href`, **and**
+  validate the scheme when the baker saves `website_url` (defense at the write-point too).
 
 ---
 

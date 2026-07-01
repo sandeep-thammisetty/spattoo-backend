@@ -1,5 +1,6 @@
 import { supabase } from './supabase.js';
 import { logSubscriptionEvent } from '../routes/subscriptions.js';
+import { enqueueLogoBgRemoval } from '../jobs/processors/removeLogoBg.js';
 import { getSparkTrialDays }    from './entitlements.js';
 import { PLAN }                from '../constants/subscriptionPlans.js';
 import { PERIOD }              from '../constants/billingPeriods.js';
@@ -29,6 +30,46 @@ export function isValidSlug(s) {
 export async function slugTaken(slug) {
   const { data } = await supabase.from('bakers').select('id').eq('slug', slug).maybeSingle();
   return !!data;
+}
+
+// Owner-identity guard: at most ONE baker per PRIMARY OWNER phone AND per primary-owner
+// email (the subscription / anti-trial-farming boundary). Scoped to is_primary=true, so
+// staff rows (is_primary=false) are intentionally excluded — a former staffer can start
+// their own baker with the same phone/email. Phone additionally has a DB race backstop
+// (partial unique baker_owner_phone_uidx WHERE is_primary — migration 015); email's race
+// backstop is auth.users' native email uniqueness (createUser/signUp fail on a dupe).
+//
+// Pass a normalised E.164 phone and/or an email. Returns the conflicting baker
+// { id, name, matchedOn: 'phone'|'email' } or null. Callers pre-check before creating the
+// auth user so we never orphan an auth account on a guaranteed-to-fail insert.
+export async function primaryOwnerConflict({ email, phone } = {}) {
+  return findAppuserByIdentity({ email, phone, primaryOnly: true });
+}
+
+// Find a baker_appusers row matching a given email OR phone. `primaryOnly` restricts to
+// owner rows (is_primary=true) — used at baker onboarding, where only owner phones/emails
+// must be unique. `primaryOnly=false` scans EVERY row (owner + staff) — used at staff-add,
+// where V1 enforces single-membership: an email/phone may exist on at most one appuser row.
+// Returns the matched row's baker { id, name, matchedOn: 'phone'|'email' } or null.
+export async function findAppuserByIdentity({ email, phone, primaryOnly = false } = {}) {
+  const e = email ? String(email).trim().toLowerCase() : null;
+  const p = phone || null;
+  if (!e && !p) return null;
+
+  const orParts = [];
+  if (p) orParts.push(`phone.eq.${p}`);
+  if (e) orParts.push(`email.eq.${e}`);
+
+  let q = supabase.from('baker_appusers').select('baker_id, email, phone').or(orParts.join(','));
+  if (primaryOnly) q = q.eq('is_primary', true);
+  const { data: rows } = await q.limit(1);
+  const row = rows?.[0];
+  if (!row) return null;
+
+  const matchedOn = (p && row.phone === p) ? 'phone' : 'email';
+  const { data: baker } = await supabase
+    .from('bakers').select('name').eq('id', row.baker_id).maybeSingle();
+  return { id: row.baker_id, name: baker?.name, matchedOn };
 }
 
 // Short, unambiguous random token (no 0/o/1/l) used to de-dupe slugs.
@@ -73,7 +114,7 @@ export async function createBakerForUser({
   authUserId, name, slug,
   email, tagline, instagram_handle, website_url,
   primary_color, accent_color, logo_url,
-  currency_code, timezone, primaryUser,
+  currency_code, timezone, primaryUser, phoneCountry,
 }) {
   // Idempotent: a user owns AT MOST ONE baker (enforced by the unique index on
   // bakers.auth_user_id — migration 012). If they already have one, return it
@@ -102,6 +143,9 @@ export async function createBakerForUser({
       currency_code:    currency_code    || 'INR',
       timezone:         timezone         || 'Asia/Kolkata',
       auth_user_id:     authUserId,
+      // NOTE: bakers.phone (business phone) is deliberately NOT written here — it's
+      // collected later via the profile screen. The onboarding phone is the OWNER's,
+      // stored on baker_appusers below (see migration 015).
       is_active:        true,
     })
     .select('id')
@@ -115,7 +159,8 @@ export async function createBakerForUser({
       first_name:      primaryUser.first_name,
       last_name:       primaryUser.last_name,
       email:           primaryUser.email,
-      phone:           primaryUser.phone || null,
+      phone:           primaryUser.phone || null,   // normalised E.164 (see lib/phone.js)
+      phone_country:   phoneCountry      || null,   // ISO-2 region
       whatsapp_number: primaryUser.whatsapp_number || null,
       role:            'owner',
       is_primary:      true,
@@ -123,6 +168,13 @@ export async function createBakerForUser({
     });
   if (userError) {
     await supabase.from('bakers').delete().eq('id', data.id);
+    // Race backstop: this owner phone won the pre-check but lost the partial unique
+    // index (two concurrent signups, same phone). Surface as a typed conflict → 409.
+    if (userError.code === '23505' && /phone/i.test(`${userError.message} ${userError.details ?? ''}`)) {
+      const e = new Error('This phone number is already registered to another bakery.');
+      e.code = 'phone_taken';
+      throw e;
+    }
     throw new Error(userError.message);
   }
 
@@ -157,6 +209,9 @@ export async function createBakerForUser({
   await logSubscriptionEvent(data.id, {
     event: 'activated', newTier: 'spark', newStatus: 'active', changedBy: 'system',
   });
+
+  // If the baker was created with a logo, generate its background-removed version async.
+  if (logo_url) enqueueLogoBgRemoval(data.id, logo_url);
 
   return { id: data.id };
 }

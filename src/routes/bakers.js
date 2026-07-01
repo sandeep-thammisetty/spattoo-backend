@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { randomBytes } from 'crypto';
 import { supabase } from '../services/supabase.js';
 import { deleteObject } from '../services/r2.js';
+import { enqueueLogoBgRemoval } from '../jobs/processors/removeLogoBg.js';
 import { requireAuth } from '../middleware/auth.js';
 import { requireCapability, resolveCustomer } from '../middleware/rbac.js';
 import { config } from '../config.js';
@@ -9,7 +10,9 @@ import { logSubscriptionEvent, deriveSubscription } from './subscriptions.js';
 import { PLAN }                from '../constants/subscriptionPlans.js';
 import { PERIOD }              from '../constants/billingPeriods.js';
 import { SUBSCRIPTION_STATUS } from '../constants/subscriptionStatuses.js';
-import { createBakerForUser, slugTaken, normalizeSlug, isValidSlug, RESERVED_SLUGS, generateUniqueSlug } from '../services/bakerProvisioning.js';
+import { createBakerForUser, slugTaken, primaryOwnerConflict, findAppuserByIdentity, normalizeSlug, isValidSlug, RESERVED_SLUGS, generateUniqueSlug } from '../services/bakerProvisioning.js';
+import { normalizePhone } from '../lib/phone.js';
+import { sendStaffWelcomeEmail } from '../services/email.js';
 import { getEntitlements } from '../services/entitlements.js';
 import { requireEntitlement } from '../middleware/entitlements.js';
 
@@ -37,14 +40,37 @@ router.post('/admin/bakers', requireAuth, requireCapability('baker:onboard'), as
       return res.status(400).json({ error: 'primaryUser.first_name, last_name, and email are required' });
     }
 
-    // Check slug uniqueness before creating the auth user
+    // Phone is required + normalised to E.164 (the anti-trial-farming key). WhatsApp
+    // is optional but validated when present. Both parse against the form's country.
+    const phone = normalizePhone(primaryUser.phone, primaryUser.phone_country);
+    if (!phone.ok) return res.status(400).json({ error: phone.error, field: 'phone' });
+
+    let whatsappE164 = null;
+    if (primaryUser.whatsapp_number) {
+      const wa = normalizePhone(primaryUser.whatsapp_number, primaryUser.phone_country);
+      if (!wa.ok) return res.status(400).json({ error: 'Enter a valid WhatsApp number', field: 'whatsapp' });
+      whatsappE164 = wa.e164;
+    }
+
+    const ownerEmail = String(primaryUser.email).trim().toLowerCase();
+
+    // Check slug + owner identity (phone OR email) before creating the auth user (avoid
+    // an orphan auth account on a guaranteed-to-fail insert). Admin sees the conflict.
     if (await slugTaken(slug)) return res.status(409).json({ error: 'Slug already taken' });
+    const conflict = await primaryOwnerConflict({ email: ownerEmail, phone: phone.e164 });
+    if (conflict) {
+      const what = conflict.matchedOn === 'phone' ? 'phone number' : 'email';
+      return res.status(409).json({
+        error: `This ${what} already belongs to "${conflict.name}".`,
+        code: 'owner_exists', bakerName: conflict.name, field: conflict.matchedOn,
+      });
+    }
 
     const tempPassword = randomBytes(6).toString('hex') + 'Aa1!';
 
     // Auth account is created for the primary user, not the business contact
     const { data: authData, error: authError } = await supabase.auth.admin.createUser({
-      email:         primaryUser.email,
+      email:         ownerEmail,
       password:      tempPassword,
       email_confirm: true,
     });
@@ -55,12 +81,16 @@ router.post('/admin/bakers', requireAuth, requireCapability('baker:onboard'), as
       const { id } = await createBakerForUser({
         authUserId: authData.user.id,
         name, slug, email, tagline, instagram_handle, website_url,
-        primary_color, accent_color, logo_url, currency_code, timezone, primaryUser,
+        primary_color, accent_color, logo_url, currency_code, timezone,
+        primaryUser: { ...primaryUser, email: ownerEmail, phone: phone.e164, whatsapp_number: whatsappE164 },
+        phoneCountry: phone.country,
       });
       res.status(201).json({ id, tempPassword });
     } catch (e) {
       // Admin created the auth user here, so admin rolls it back on failure.
       await supabase.auth.admin.deleteUser(authData.user.id);
+      // Race backstop: phone won the pre-check but lost the unique index → 409, not 500.
+      if (e.code === 'phone_taken') return res.status(409).json({ error: e.message, code: 'phone_taken', field: 'phone' });
       return res.status(500).json({ error: e.message });
     }
   } catch (err) {
@@ -94,14 +124,31 @@ router.post('/bakers/self', requireAuth, async (req, res) => {
       .from('baker_appusers').select('baker_id').eq('auth_user_id', req.user.id).maybeSingle();
     if (existingUser?.baker_id) return res.status(200).json({ id: existingUser.baker_id, existing: true });
 
-    const meta      = req.user.user_metadata ?? {};
-    const name      = (req.body.name ?? '').trim();
-    const firstName = (req.body.firstName ?? meta.first_name ?? '').trim();
-    const lastName  = (req.body.lastName  ?? meta.last_name  ?? '').trim();
-    const phone     = req.body.phone ?? meta.phone ?? null;
+    const meta        = req.user.user_metadata ?? {};
+    const name        = (req.body.name ?? '').trim();
+    const firstName   = (req.body.firstName ?? meta.first_name ?? '').trim();
+    const lastName    = (req.body.lastName  ?? meta.last_name  ?? '').trim();
+    const phoneRaw    = req.body.phone         ?? meta.phone         ?? null;
+    const phoneCountry= req.body.phone_country ?? meta.phone_country ?? 'IN';
 
     if (!name)                   return res.status(400).json({ error: 'Business name is required' });
     if (!firstName || !lastName) return res.status(400).json({ error: 'Your first and last name are required' });
+
+    // Phone is required + normalised (anti-trial-farming key). Collected at signup
+    // into user_metadata; validated again here (source of truth).
+    const phone = normalizePhone(phoneRaw, phoneCountry);
+    if (!phone.ok) return res.status(400).json({ error: phone.error, field: 'phone' });
+
+    const ownerEmail = String(req.user.email ?? '').trim().toLowerCase();
+
+    // One owner per phone AND per email. Generic message (no baker name) — a self-signup
+    // caller is anonymous-ish, so we don't leak WHICH bakery owns the identity.
+    if (await primaryOwnerConflict({ email: ownerEmail, phone: phone.e164 })) {
+      return res.status(409).json({
+        error: 'An account with this phone number or email already exists. Please sign in, or use different details.',
+        code: 'owner_exists', field: 'phone',
+      });
+    }
 
     // Slug is derived from the bakery name and de-duped server-side; the client
     // never picks it, so no baker can claim another's name.
@@ -110,9 +157,83 @@ router.post('/bakers/self', requireAuth, async (req, res) => {
     const { id } = await createBakerForUser({
       authUserId: req.user.id,
       name, slug,
-      primaryUser: { first_name: firstName, last_name: lastName, email: req.user.email, phone },
+      primaryUser: { first_name: firstName, last_name: lastName, email: ownerEmail, phone: phone.e164 },
+      phoneCountry: phone.country,
     });
     res.status(201).json({ id, slug });
+  } catch (err) {
+    if (err.code === 'phone_taken') {
+      return res.status(409).json({ error: 'An account with this phone number already exists. Please sign in, or use a different number.', code: 'owner_exists', field: 'phone' });
+    }
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── POST /api/baker/staff ─────────────────────────────────────────────────────
+// A baker (owner) adds a staff member: creates a Supabase auth account (temp password
+// returned for the owner to hand over) + a baker_appusers row (role='staff',
+// is_primary=false) under the OWNER's baker.
+//
+// V1 = single-membership: reject if the email OR phone already exists on ANY
+// baker_appusers row (owner or staff, any baker). A staff member belongs to exactly one
+// baker; multi-baker staff + a "log in as staff → pick baker" flow is deferred (see the
+// identity-model doc). Email also has auth.users' native uniqueness as a race backstop.
+router.post('/baker/staff', requireAuth, requireCapability('staff:manage'), async (req, res) => {
+  try {
+    const bakerId = req.bakerId;   // set by requireCapability → loadPrincipal (the owner's baker)
+    if (!bakerId) return res.status(403).json({ error: 'Not a baker account' });
+
+    const first_name = String(req.body.first_name ?? '').trim();
+    const last_name  = String(req.body.last_name  ?? '').trim();
+    const email      = String(req.body.email ?? '').trim().toLowerCase();
+    if (!first_name) return res.status(400).json({ error: 'First name is required', field: 'first_name' });
+    if (!email)      return res.status(400).json({ error: 'Email is required', field: 'email' });
+
+    // Phone is optional for staff; validated + normalised to E.164 when provided.
+    let phoneE164 = null, phoneCountry = null;
+    if (req.body.phone) {
+      const phone = normalizePhone(req.body.phone, req.body.phone_country);
+      if (!phone.ok) return res.status(400).json({ error: phone.error, field: 'phone' });
+      phoneE164 = phone.e164; phoneCountry = phone.country;
+    }
+
+    // V1 single-membership: this email/phone must not already exist on ANY appuser row.
+    const conflict = await findAppuserByIdentity({ email, phone: phoneE164 });
+    if (conflict) {
+      const what = conflict.matchedOn === 'phone' ? 'phone number' : 'email';
+      return res.status(409).json({ error: `This ${what} is already registered on Spattoo.`, code: 'appuser_exists', field: conflict.matchedOn });
+    }
+
+    // Invite the staff member: Supabase creates the (unconfirmed, password-less) auth user
+    // and SENDS the activation email (SMTP is configured). `data` → user_metadata, so the
+    // email template can branch on .Data.role and the app knows they must set a password.
+    // On accept they land on `redirectTo` (the app root) → set-password gate → welcome email.
+    const redirectTo = typeof req.body.redirectTo === 'string' ? req.body.redirectTo : undefined;
+    const { data: authData, error: authError } = await supabase.auth.admin.inviteUserByEmail(email, {
+      data: { role: 'staff', baker_id: bakerId, first_name, last_name, must_set_password: true },
+      redirectTo,
+    });
+    if (authError) return res.status(400).json({ error: authError.message });
+
+    const { data: row, error: insErr } = await supabase
+      .from('baker_appusers')
+      .insert({
+        baker_id:      bakerId,
+        first_name, last_name, email,
+        phone:         phoneE164,
+        phone_country: phoneCountry,
+        role:          'staff',
+        is_primary:    false,
+        auth_user_id:  authData.user.id,
+      })
+      .select('id')
+      .single();
+    if (insErr) {
+      await supabase.auth.admin.deleteUser(authData.user.id);   // roll back the orphan auth user
+      return res.status(500).json({ error: insErr.message });
+    }
+
+    res.status(201).json({ id: row.id, email, invited: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -122,7 +243,7 @@ router.get('/baker/profile', requireAuth, async (req, res) => {
   try {
     const { data: contact } = await supabase
       .from('baker_appusers')
-      .select('first_name, last_name, baker_id')
+      .select('id, first_name, last_name, baker_id, role, welcome_sent_at')
       .eq('auth_user_id', req.user.id)
       .maybeSingle();
     if (!contact) {
@@ -154,10 +275,25 @@ router.get('/baker/profile', requireAuth, async (req, res) => {
 
     const { data: baker } = await supabase
       .from('bakers')
-      .select('id, name, slug, logo_url, primary_color, accent_color, instagram_handle, website_url, tagline, storefront_theme_id, portrait_url, storefront_published, storefront_customizations')
+      .select('id, name, slug, logo_url, logo_transparent_key, primary_color, accent_color, instagram_handle, website_url, tagline, storefront_theme_id, portrait_url, storefront_published, storefront_customizations')
       .eq('id', contact.baker_id)
       .single();
     if (!baker) return res.status(404).json({ error: 'Baker not found' });
+
+    // First authenticated request by a just-confirmed staff member → send OUR welcome
+    // email (once). Race-safe: claim the send with a conditional UPDATE before mailing,
+    // so concurrent profile loads can't double-send. Fire-and-forget — never blocks login.
+    if (contact.role === 'staff' && !contact.welcome_sent_at) {
+      const { data: claimed } = await supabase
+        .from('baker_appusers')
+        .update({ welcome_sent_at: new Date().toISOString() })
+        .eq('id', contact.id).is('welcome_sent_at', null)
+        .select('id').maybeSingle();
+      if (claimed) {
+        sendStaffWelcomeEmail({ staff: { email: req.user.email, first_name: contact.first_name }, baker })
+          .catch((e) => console.error('staff welcome email failed:', e?.message));
+      }
+    }
 
     const sub = await deriveSubscription(contact.baker_id);
 
@@ -177,7 +313,8 @@ router.get('/baker/profile', requireAuth, async (req, res) => {
     res.json({
       baker: {
         id: baker.id, name: baker.name, slug: baker.slug,
-        logo_url:         toPublicUrl(baker.logo_url),
+        logo_url:             toPublicUrl(baker.logo_url),
+        logo_transparent_url: toPublicUrl(baker.logo_transparent_key),
         primary_color:    baker.primary_color,  accent_color: baker.accent_color,
         instagram_handle: baker.instagram_handle, website_url: baker.website_url,
         tagline:          baker.tagline,
@@ -189,7 +326,7 @@ router.get('/baker/profile', requireAuth, async (req, res) => {
         subscription_plan:   sub.plan?.name ?? null,
         subscription_end:    sub.end_date   ?? null,
       },
-      user: { firstName: contact.first_name, lastName: contact.last_name, email: req.user.email },
+      user: { firstName: contact.first_name, lastName: contact.last_name, email: req.user.email, role: contact.role },
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -244,6 +381,10 @@ router.patch('/baker/profile', requireAuth, requireCapability('store:manage'), a
     if (req.body.storefront_customizations && typeof req.body.storefront_customizations === 'object') {
       updates.storefront_customizations = req.body.storefront_customizations;
     }
+    // Logo changed → reset the derived transparent version; the async job repopulates it (and it
+    // stays null if the logo was cleared), so we never show a transparent cutout of a stale logo.
+    if ('logo_url' in updates) updates.logo_transparent_key = null;
+
     if (!Object.keys(updates).length) return res.status(400).json({ error: 'No fields to update' });
 
     const { error } = await supabase
@@ -251,6 +392,8 @@ router.patch('/baker/profile', requireAuth, requireCapability('store:manage'), a
       .update(updates)
       .eq('id', contact.baker_id);
     if (error) return res.status(500).json({ error: error.message });
+
+    if (updates.logo_url) enqueueLogoBgRemoval(contact.baker_id, updates.logo_url);
 
     res.json({ ok: true });
   } catch (err) {

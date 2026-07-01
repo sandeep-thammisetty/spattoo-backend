@@ -32,6 +32,31 @@ function orderDetailsHtml(order) {
   `;
 }
 
+// Warm welcome sent by US (not Supabase) once an invited staff member has confirmed +
+// set their password — see the first-load trigger in GET /api/baker/profile. Best-effort
+// (the send is fire-and-forget; the DB flag is already claimed before we get here).
+export async function sendStaffWelcomeEmail({ staff, baker }) {
+  if (!config.smtp.host || !config.smtp.user) return;
+  if (!staff?.email) return;
+
+  const name = staff.first_name || 'there';
+  const bakery = baker?.name || 'your bakery';
+  await transporter.sendMail({
+    from:    config.smtp.from,
+    to:      staff.email,
+    subject: `Welcome to ${bakery} on Spattoo 🎂`,
+    html: `
+      <div style="font-family:sans-serif;max-width:560px;margin:0 auto">
+        <h2 style="color:#2C4433">Welcome, ${name}!</h2>
+        <p>You've been added to the team at <b>${bakery}</b> on Spattoo.</p>
+        <p>Sign in any time using the <b>Staff</b> tab with your email — you can help manage
+           orders, customers and cake designs.</p>
+        <p style="color:#888;font-size:12px;margin-top:24px">Powered by Spattoo</p>
+      </div>
+    `,
+  });
+}
+
 export async function sendOrderEmails({ order, baker, customer }) {
   if (!config.smtp.host || !config.smtp.user) return;
 

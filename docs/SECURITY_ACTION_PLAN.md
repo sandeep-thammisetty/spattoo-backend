@@ -94,13 +94,24 @@ forget — see SEC-1, SEC-11). The RBAC model is sound: a separate `admins` tabl
 
 ## 🟡 Medium
 
-- [ ] **SEC-5 — R2 signed-upload: keys not tenant-scoped + no content-type allowlist.**
-  `src/routes/storage.js:25-41` — key = `folder/filename` with no baker prefix / no server-enforced
-  random id → overwrite another tenant's asset; `contentType` unvalidated → upload `text/html` /
-  `image/svg+xml` to a public folder and get a stable URL that executes script on the asset origin.
-  **Fix:** derive keys server-side as `folder/<bakerId>/<uuid>.<ext>`; allowlist MIME per folder; set a
-  restrictive `Content-Type`/`Content-Disposition` on user-uploaded public objects (or serve from a
-  sandboxed origin). _(Path traversal via `../` is NOT exploitable — R2 keys are opaque.)_
+- [x] **SEC-5 — R2 signed-upload: keys not tenant-scoped + no content-type allowlist. ✅ DONE.**
+  Was: key = `folder/filename` (client-controlled, no random id → overwrite another tenant's asset;
+  predictable) and `contentType` unvalidated → upload `text/html` / `image/svg+xml` to the public
+  bucket and get a stable URL that executes script on the asset origin (stored XSS / phishing hosting).
+  **Fix (`src/routes/storage.js`):**
+  - **MIME allowlist per folder** — single-source `FOLDER_CONTENT_TYPES` map (image folders = raster
+    only, **SVG deliberately excluded**; model folders = GLB/binary); `ALLOWED_FOLDERS` is now *derived*
+    from it (DRY, can't drift). `text/html`/`image/svg+xml` are rejected with 400.
+  - **Server-derived keys** — `folder/<randomUUID()>.<ext>`; the client filename contributes only a
+    sanitised extension. No client can overwrite (UUID collision ≈ 0) or predict/enumerate keys.
+    Transparent to callers — grep confirmed all upload sites (admin, core, web) use the *returned*
+    `key`/`publicUrl`, never the name they sent.
+  - Extension logic unit-checked (case-fold, multi-dot, missing-ext fallback, over-long reject).
+  _(Path traversal via `../` was never exploitable — R2 keys are opaque; now moot anyway since the key
+  is server-generated.) Chose a random UUID over a `<bakerId>` prefix because the route is also used by
+  admin (no baker) and customers; the UUID closes the overwrite/predictability vuln without needing to
+  resolve a tenant. **Deeper hardening (future):** `Content-Disposition: attachment` on user-uploaded
+  public objects, or serve them from a sandboxed asset origin — defense-in-depth beyond the MIME gate.)_
 
 - [ ] **SEC-6 — Paid-plan self-activation fails *open* if Razorpay keys are unset.**
   `src/routes/billing.js:204-239` — when `razorpayEnabled()` is false, `POST /billing/subscribe`

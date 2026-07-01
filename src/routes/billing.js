@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { serverError } from '../lib/httpError.js';
 import crypto from 'crypto';
 import Razorpay from 'razorpay';
 import { supabase } from '../services/supabase.js';
@@ -101,10 +102,10 @@ router.get('/billing/periods', requireAuth, requireCapability('billing:manage'),
       .select('id, name, display_name, months, discount_pct')
       .eq('is_active', true)
       .order('sort_order');
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return serverError(req, res, error);
     res.json(data);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -124,7 +125,7 @@ router.get('/billing/status', requireAuth, requireCapability('billing:manage'), 
       cancel_at_period_end: sub.cancel_at_period_end ?? false,
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -188,7 +189,7 @@ router.post('/billing/subscribe', requireAuth, requireCapability('billing:manage
         console.error('[billing] park PENDING subscription row failed:', parkErr.message);
         await razorpayCancelSubscription(subscription.id, false)
           .catch(e => console.error('[billing] rollback of orphaned Razorpay sub failed:', e.message));
-        return res.status(500).json({ error: `Could not start subscription: ${parkErr.message}` });
+        return serverError(req, res, parkErr);
       }
 
       await supabase.from('bakers').update({
@@ -251,7 +252,7 @@ router.post('/billing/subscribe', requireAuth, requireCapability('billing:manage
 
     res.json({ ok: true, mock: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -287,7 +288,7 @@ router.post('/billing/cancel', requireAuth, requireCapability('billing:manage'),
     const { error: markErr } = baker.billing_subscription_id
       ? await markQuery.eq('billing_subscription_id', baker.billing_subscription_id)
       : await markQuery.eq('baker_id', baker.id).eq('status_id', SUBSCRIPTION_STATUS.ACTIVE);
-    if (markErr) return res.status(500).json({ error: markErr.message });
+    if (markErr) return serverError(req, res, markErr);
 
     await logSubscriptionEvent(baker.id, {
       event:          'cancelled',
@@ -300,7 +301,7 @@ router.post('/billing/cancel', requireAuth, requireCapability('billing:manage'),
 
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -355,7 +356,7 @@ router.post('/billing/activate-spark', requireAuth, requireCapability('billing:m
 
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -381,7 +382,7 @@ router.get('/billing/payments', requireAuth, requireCapability('billing:manage')
       .eq('baker_id', baker.id)
       .order('charged_at', { ascending: false })
       .limit(limit);
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return serverError(req, res, error);
 
     const payments = (data ?? []).map(({ status_id, ...p }) => ({
       ...p,
@@ -389,7 +390,7 @@ router.get('/billing/payments', requireAuth, requireCapability('billing:manage')
     }));
     res.json({ payments, total: count ?? payments.length });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -503,7 +504,7 @@ router.post('/billing/webhook', async (req, res) => {
     res.json({ ok: true });
   } catch (err) {
     console.error('Billing webhook error:', err.message);
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 

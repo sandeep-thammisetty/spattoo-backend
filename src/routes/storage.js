@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { serverError } from '../lib/httpError.js';
 import { randomUUID } from 'crypto';
 import { getSignedUploadUrl, deleteObject } from '../services/r2.js';
 import { requireAuth } from '../middleware/auth.js';
@@ -73,7 +74,7 @@ router.post('/storage/sign-upload', requireAuth, requireCapability('design:creat
     const publicUrl = config.r2.publicUrl ? `${config.r2.publicUrl}/${key}` : null;
     res.json({ url, key, publicUrl });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -104,7 +105,7 @@ router.post('/storage/delete', requireAuth, requireAdmin, async (req, res) => {
     await deleteObject(key);
     res.json({ ok: true, key });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 

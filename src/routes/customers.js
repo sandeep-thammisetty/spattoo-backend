@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { serverError } from '../lib/httpError.js';
 import { supabase } from '../services/supabase.js';
 import { requireAuth } from '../middleware/auth.js';
 import { requireCapability } from '../middleware/rbac.js';
@@ -38,7 +39,7 @@ router.get('/baker/customers', requireAuth, requireCapability('customer:manage')
     if (from)             query = query.gte('created_at', from);
 
     const { data, error } = await query;
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return serverError(req, res, error);
 
     const result = q
       ? data.filter(c => {
@@ -49,7 +50,7 @@ router.get('/baker/customers', requireAuth, requireCapability('customer:manage')
 
     res.json(result);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -79,10 +80,10 @@ router.post('/baker/customers', requireAuth, requireCapability('customer:manage'
       .select('id, first_name, last_name, email, phone, is_active, source, created_at')
       .single();
 
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return serverError(req, res, error);
     res.status(201).json(data);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -111,11 +112,11 @@ router.patch('/baker/customers/:id', requireAuth, requireCapability('customer:ma
       .select('id, first_name, last_name, email, phone, is_active, source, created_at')
       .maybeSingle();
 
-    if (error)  return res.status(500).json({ error: error.message });
+    if (error)  return serverError(req, res, error);
     if (!data)  return res.status(404).json({ error: 'Customer not found' });
     res.json(data);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -131,11 +132,11 @@ router.patch('/baker/customers/:id/deactivate', requireAuth, requireCapability('
       .eq('id', req.params.id).eq('baker_id', bakerId)
       .select('id, is_active').maybeSingle();
 
-    if (error)  return res.status(500).json({ error: error.message });
+    if (error)  return serverError(req, res, error);
     if (!data)  return res.status(404).json({ error: 'Customer not found' });
     res.json(data);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -151,11 +152,11 @@ router.patch('/baker/customers/:id/reactivate', requireAuth, requireCapability('
       .eq('id', req.params.id).eq('baker_id', bakerId)
       .select('id, is_active').maybeSingle();
 
-    if (error)  return res.status(500).json({ error: error.message });
+    if (error)  return serverError(req, res, error);
     if (!data)  return res.status(404).json({ error: 'Customer not found' });
     res.json(data);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -200,7 +201,7 @@ router.post('/baker/customers/invite', requireAuth, requireCapability('customer:
         })
         .select('id')
         .single();
-      if (cErr) return res.status(500).json({ error: cErr.message });
+      if (cErr) return serverError(req, res, cErr);
       customer = created;
     }
 
@@ -233,7 +234,7 @@ router.post('/baker/customers/invite', requireAuth, requireCapability('customer:
       })
       .select('id, status, channels, note, expires_at, created_at')
       .single();
-    if (iErr) return res.status(500).json({ error: iErr.message });
+    if (iErr) return serverError(req, res, iErr);
 
     // Subdomain link: {slug}.<storefront domain>. The invite id grants nothing — OTP gates access.
     const link = `${config.storefront.urlTemplate.replace('{slug}', baker.slug)}/?invite=${invite.id}`;
@@ -278,7 +279,7 @@ router.post('/baker/customers/invite', requireAuth, requireCapability('customer:
       delivery: { email: emailResult },
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 

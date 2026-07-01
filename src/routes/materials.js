@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { serverError } from '../lib/httpError.js';
 import { supabase } from '../services/supabase.js';
 import { requireAuth } from '../middleware/auth.js';
 import { requireCapability } from '../middleware/rbac.js';
@@ -37,10 +38,10 @@ router.get('/materials', requireAuth, requireCapability('design:create'), async 
       .select(FIELDS)
       .eq('is_active', true)
       .order('sort_order');
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return serverError(req, res, error);
     res.json(data);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -52,10 +53,10 @@ router.get('/admin/materials', requireAuth, requireCapability('catalog:admin'), 
       .from('materials')
       .select(FIELDS)
       .order('sort_order');
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return serverError(req, res, error);
     res.json(data);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -87,7 +88,7 @@ router.post('/admin/materials', requireAuth, requireCapability('catalog:admin'),
     }
     res.json(data);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -119,7 +120,7 @@ router.patch('/admin/materials/:id', requireAuth, requireCapability('catalog:adm
     }
     res.json(data);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 

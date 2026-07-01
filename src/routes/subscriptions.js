@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { serverError } from '../lib/httpError.js';
 import { supabase } from '../services/supabase.js';
 import { requireAuth } from '../middleware/auth.js';
 import { requireCapability } from '../middleware/rbac.js';
@@ -75,11 +76,11 @@ router.get('/plans', async (req, res) => {
         .from('subscription_plans')
         .select('name, display_name, price_monthly, price_yearly, sort_order')
         .eq('is_active', true).order('sort_order'));
-      if (error) return res.status(500).json({ error: error.message });
+      if (error) return serverError(req, res, error);
       data = (data ?? []).map(p => ({ ...p, tagline: null, feature_bullets: [], is_popular: false, has_storefront: p.name !== 'spark' }));
     }
     res.json(data ?? []);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { serverError(req, res, err); }
 });
 
 // ── GET /admin/subscription-plans ─────────────────────────────────────────────
@@ -87,9 +88,9 @@ router.get('/admin/subscription-plans', requireAuth, async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('subscription_plans').select('*').order('sort_order');
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return serverError(req, res, error);
     res.json(data);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { serverError(req, res, err); }
 });
 
 // ── POST /admin/subscription-plans ────────────────────────────────────────────
@@ -108,9 +109,9 @@ router.post('/admin/subscription-plans', requireAuth, requireCapability('subscri
         is_popular: is_popular ?? false, has_storefront: has_storefront ?? true,
       })
       .select().single();
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return serverError(req, res, error);
     res.status(201).json(data);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { serverError(req, res, err); }
 });
 
 // ── PATCH /admin/subscription-plans/:id ───────────────────────────────────────
@@ -124,18 +125,18 @@ router.patch('/admin/subscription-plans/:id', requireAuth, requireCapability('su
 
     const { data, error } = await supabase
       .from('subscription_plans').update(updates).eq('id', req.params.id).select().single();
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return serverError(req, res, error);
     res.json(data);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { serverError(req, res, err); }
 });
 
 // ── GET /admin/bakers/subscriptions ───────────────────────────────────────────
 router.get('/admin/bakers/subscriptions', requireAuth, requireCapability('baker:support'), async (req, res) => {
   try {
     const { data, error } = await supabase.rpc('get_baker_subscriptions_admin');
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return serverError(req, res, error);
     res.json(data ?? []);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { serverError(req, res, err); }
 });
 
 // ── GET /admin/bakers/:id/subscription ────────────────────────────────────────
@@ -154,7 +155,7 @@ router.get('/admin/bakers/:id/subscription', requireAuth, requireCapability('bak
       .order('created_at', { ascending: false }).limit(50);
 
     res.json({ baker, current, events: events ?? [] });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { serverError(req, res, err); }
 });
 
 // ── POST /admin/bakers/:id/subscription ───────────────────────────────────────
@@ -198,7 +199,7 @@ router.post('/admin/bakers/:id/subscription', requireAuth, requireCapability('su
       start_date:        today,
       end_date:          resolvedEndDate,
     });
-    if (insertErr) return res.status(500).json({ error: insertErr.message });
+    if (insertErr) return serverError(req, res, insertErr);
 
     // Keep subscription_plan_id in sync
     await supabase.from('bakers')
@@ -217,7 +218,7 @@ router.post('/admin/bakers/:id/subscription', requireAuth, requireCapability('su
     });
 
     res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { serverError(req, res, err); }
 });
 
 // ── GET /admin/bakers/:id/payments ────────────────────────────────────────────
@@ -229,10 +230,10 @@ router.get('/admin/bakers/:id/payments', requireAuth, requireCapability('baker:s
       .eq('baker_id', req.params.id)
       .order('charged_at', { ascending: false })
       .limit(50);
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return serverError(req, res, error);
     res.json(data ?? []);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -249,9 +250,9 @@ router.get('/baker/subscription/history', requireAuth, requireCapability('billin
       .select('id, event, previous_tier, new_tier, previous_status, new_status, note, created_at')
       .eq('baker_id', contact.baker_id)
       .order('created_at', { ascending: false }).limit(20);
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return serverError(req, res, error);
     res.json(data ?? []);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { serverError(req, res, err); }
 });
 
 // ── POST /api/baker/plan/select ──────────────────────────────────────────────
@@ -294,7 +295,7 @@ router.post('/baker/plan/select', requireAuth, requireCapability('billing:manage
       start_date:        today,
       end_date:          end.toISOString().slice(0, 10),
     });
-    if (insErr) return res.status(500).json({ error: insErr.message });
+    if (insErr) return serverError(req, res, insErr);
 
     await supabase.from('bakers')
       .update({ subscription_plan_id: planId, subscription_status_id: SUBSCRIPTION_STATUS.ACTIVE })
@@ -312,7 +313,7 @@ router.post('/baker/plan/select', requireAuth, requireCapability('billing:manage
     });
 
     res.json({ ok: true, plan: planName });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { serverError(req, res, err); }
 });
 
 export default router;

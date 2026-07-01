@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { serverError } from '../lib/httpError.js';
 import { supabase } from '../services/supabase.js';
 import { requireAuth } from '../middleware/auth.js';
 import { requireCapability } from '../middleware/rbac.js';
@@ -66,10 +67,10 @@ router.get('/craft-guide', requireAuth, requireCapability('design:create'), asyn
       .select(CRAFT_FIELDS)
       .in('element_id', ids);
 
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return serverError(req, res, error);
     res.json(data);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -94,7 +95,7 @@ router.post('/admin/craft-guide/suggest', requireAuth, requireCapability('catalo
       .from('nozzles')
       .select('id, brand, number, name, category, description, is_common')
       .eq('is_active', true);
-    if (catErr) return res.status(500).json({ error: catErr.message });
+    if (catErr) return serverError(req, res, catErr);
     if (!catalog?.length) return res.status(400).json({ error: 'nozzle catalog is empty — seed it first' });
 
     const result = await suggestCraftGuide({ imageUrl, name, description, catalog });
@@ -126,7 +127,7 @@ router.post('/admin/craft-guide/suggest', requireAuth, requireCapability('catalo
     res.json({ nozzle_recs, consistency, technique });
   } catch (err) {
     console.error('craft-guide suggest error:', err.message);
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -140,10 +141,10 @@ router.get('/admin/craft-guide/:elementId', requireAuth, requireCapability('cata
       .eq('element_id', req.params.elementId)
       .maybeSingle();
 
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return serverError(req, res, error);
     res.json(data); // null when no row exists yet
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -183,7 +184,7 @@ router.put('/admin/craft-guide/:elementId', requireAuth, requireCapability('cata
 
     res.json(data);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 

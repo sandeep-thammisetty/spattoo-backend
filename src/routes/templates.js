@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { serverError } from '../lib/httpError.js';
 import { supabase } from '../services/supabase.js';
 import { requireAuth, attachBakerContext } from '../middleware/auth.js';
 import { requireCapability } from '../middleware/rbac.js';
@@ -53,11 +54,11 @@ router.get('/templates', requireAuth, requireCapability('design:create'), attach
     }
 
     const { data, error } = await query;
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return serverError(req, res, error);
 
     res.json(data.map(t => withTagsAndAttrs({ ...t, thumbnail_url: toPublicUrl(t.thumbnail_url) })));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -68,10 +69,10 @@ router.get('/admin/templates', requireAuth, requireCapability('catalog:admin'), 
       .select(`${TEMPLATE_FIELDS}, ${TEMPLATE_FILTER_JOIN}`)
       .order('sort_order');
 
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return serverError(req, res, error);
     res.json(data.map(t => withTagsAndAttrs({ ...t, thumbnail_url: toPublicUrl(t.thumbnail_url) })));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -90,7 +91,7 @@ router.get('/templates/:id', requireAuth, requireCapability('design:create'), as
     if (error) return res.status(404).json({ error: 'Template not found' });
     res.json(withTagsAndAttrs({ ...data, thumbnail_url: toPublicUrl(data.thumbnail_url) }));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -119,7 +120,7 @@ router.post('/admin/templates', requireAuth, requireCapability('catalog:admin'),
       .select('id')
       .single();
 
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return serverError(req, res, error);
 
     if (thumbnail_url) {
       jobQueue.add('auto_tag', { entityType: 'template', entityId: data.id, thumbnailKey: thumbnail_url, name }).catch(() => {});
@@ -127,7 +128,7 @@ router.post('/admin/templates', requireAuth, requireCapability('catalog:admin'),
 
     res.status(201).json({ id: data.id });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -141,10 +142,10 @@ router.patch('/admin/templates/:id', requireAuth, requireCapability('catalog:adm
       .update(updates)
       .eq('id', req.params.id);
 
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return serverError(req, res, error);
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -155,10 +156,10 @@ router.delete('/admin/templates/:id', requireAuth, requireCapability('catalog:ad
       .delete()
       .eq('id', req.params.id);
 
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return serverError(req, res, error);
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 

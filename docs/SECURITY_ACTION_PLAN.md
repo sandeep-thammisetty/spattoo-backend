@@ -144,11 +144,19 @@ forget — see SEC-1, SEC-11). The RBAC model is sound: a separate `admins` tabl
   **Fix:** allowlist known origins (`app.spattoo.dev`, `*.spattoo.com`/`*.spattoo.dev`, admin) via
   `cors({ origin: fn })`.
 
-- [ ] **SEC-9 — Raw internal error messages leaked to clients.**
-  ~20 route catches `return res.status(500).json({ error: err.message })`, bypassing the safe
-  `src/middleware/errorHandler.js` — leaking Supabase/Postgres messages, constraint/column names.
-  **Fix:** `next(err)` to the central handler on 5xx (mask to generic + request id); keep 4xx validation
-  messages.
+- [x] **SEC-9 — Raw internal error messages leaked to clients. ✅ DONE.**
+  Was: **228** route sites (far more than the "~20" first estimate) did `res.status(500).json({ error:
+  err.message })` (catch blocks) or `if (error) return res.status(500).json({ error: error.message })`
+  (inline Supabase errors), bypassing `middleware/errorHandler.js` — leaking Postgres/Supabase messages,
+  constraint/column/internal detail, and also skipping telemetry + `request_id`. **Fix:** new shared
+  `src/lib/httpError.js → serverError(req, res, err)` that mirrors the central handler (logs to
+  telemetry, returns `{ error: 'Internal server error', request_id }` — never the raw message). Routes
+  keep their `(req, res)` signature (no `next` retrofit needed). Every 500 site across all 20 route files
+  now routes through it (mechanical sweep; `rbac.js` `_req`→`req` + a unique-violation 409 given a clean
+  message; two template-literal 500s handled). **4xx validation messages kept as-is** (safe + useful).
+  Verified: all route files parse, `npm run check` green, zero remaining `status(500)…​.message` leaks,
+  and a live check confirms the raw message is logged server-side but the client body is masked +
+  carries `request_id`.
 
 - [x] **SEC-10 — PostgREST `.or()` filter injection from user input. ✅ DONE.**
   Was: `.or()` filters built by string-interpolating user-controlled values, so crafted `,`/`)`/`.`

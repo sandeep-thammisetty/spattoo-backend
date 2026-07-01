@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { serverError } from '../lib/httpError.js';
 import { supabase } from '../services/supabase.js';
 import { jobQueue } from '../jobs/queue.js';
 import { requireAuth } from '../middleware/auth.js';
@@ -19,12 +20,12 @@ router.post('/jobs/extract', requireAuth, requireCapability('catalog:admin'), as
       .select('id')
       .single();
 
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return serverError(req, res, error);
 
     await jobQueue.add('extract_image', { jobId: job.id });
     res.json({ jobId: job.id });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 

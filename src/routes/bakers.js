@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { serverError } from '../lib/httpError.js';
 import { randomBytes } from 'crypto';
 import { supabase } from '../services/supabase.js';
 import { deleteObject } from '../services/r2.js';
@@ -94,10 +95,10 @@ router.post('/admin/bakers', requireAuth, requireCapability('baker:onboard'), as
       await supabase.auth.admin.deleteUser(authData.user.id);
       // Race backstop: phone won the pre-check but lost the unique index → 409, not 500.
       if (e.code === 'phone_taken') return res.status(409).json({ error: e.message, code: 'phone_taken', field: 'phone' });
-      return res.status(500).json({ error: e.message });
+      return serverError(req, res, e);
     }
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -123,7 +124,7 @@ router.get('/bakers/slug-available', availabilityLimit, async (req, res) => {
     if (await slugTaken(slug))       return res.json({ slug, available: false, reason: 'taken' });
     return res.json({ slug, available: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -140,7 +141,7 @@ router.get('/bakers/phone-available', availabilityLimit, async (req, res) => {
     const conflict = await primaryOwnerConflict({ phone: norm.e164 });
     return res.json({ available: !conflict, e164: norm.e164 });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -197,7 +198,7 @@ router.post('/bakers/self', requireAuth, selfSignupLimit, async (req, res) => {
     if (err.code === 'phone_taken') {
       return res.status(409).json({ error: 'An account with this phone number already exists. Please sign in, or use a different number.', code: 'owner_exists', field: 'phone' });
     }
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -262,12 +263,12 @@ router.post('/baker/staff', requireAuth, requireCapability('staff:manage'), asyn
       .single();
     if (insErr) {
       await supabase.auth.admin.deleteUser(authData.user.id);   // roll back the orphan auth user
-      return res.status(500).json({ error: insErr.message });
+      return serverError(req, res, insErr);
     }
 
     res.status(201).json({ id: row.id, email, invited: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -361,7 +362,7 @@ router.get('/baker/profile', requireAuth, async (req, res) => {
       user: { firstName: contact.first_name, lastName: contact.last_name, email: req.user.email, role: contact.role },
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -380,7 +381,7 @@ router.get('/baker/entitlements', requireAuth, async (req, res) => {
       .from('orders').select('id', { count: 'exact', head: true }).eq('baker_id', contact.baker_id);
     res.json({ ...ent, usage: { orders_used: count ?? 0 } });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -423,13 +424,13 @@ router.patch('/baker/profile', requireAuth, requireCapability('store:manage'), a
       .from('bakers')
       .update(updates)
       .eq('id', contact.baker_id);
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return serverError(req, res, error);
 
     if (updates.logo_url) enqueueLogoBgRemoval(contact.baker_id, updates.logo_url);
 
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -442,10 +443,10 @@ router.get('/baker/storefront-themes', requireAuth, async (req, res) => {
       .from('storefront_themes')
       .select('id, key, name, description, is_active')
       .order('sort_order');
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return serverError(req, res, error);
     res.json({ themes: data ?? [] });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -462,11 +463,11 @@ router.get('/baker/storefront-photos', requireAuth, async (req, res) => {
       .select('id, storage_key, caption, sort_order')
       .eq('baker_id', contact.baker_id)
       .order('sort_order');
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return serverError(req, res, error);
 
     res.json({ photos: (data ?? []).map(p => ({ id: p.id, key: p.storage_key, url: toPublicUrl(p.storage_key), caption: p.caption })) });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -492,14 +493,14 @@ router.post('/baker/storefront-photos', requireAuth, requireCapability('store:ma
       .insert({ baker_id: contact.baker_id, storage_key, caption: req.body?.caption || null, sort_order })
       .select('id, storage_key, caption, sort_order')
       .single();
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return serverError(req, res, error);
 
     // Convert the uploaded photo to a web-optimised WebP (resize + quality) in the background.
     enqueueOptimizePhoto(data.id, data.storage_key);
 
     res.json({ id: data.id, key: data.storage_key, url: toPublicUrl(data.storage_key), caption: data.caption, sort_order: data.sort_order });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -514,7 +515,7 @@ router.post('/baker/storefront-image', requireAuth, requireCapability('store:man
     const newKey = await optimizeImageToWebp(key);
     res.json({ key: newKey, url: toPublicUrl(newKey) });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -532,12 +533,12 @@ router.delete('/baker/storefront-photos/:id', requireAuth, requireCapability('st
     if (!row) return res.status(404).json({ error: 'Photo not found' });
 
     const { error } = await supabase.from('baker_storefront_photos').delete().eq('id', row.id);
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return serverError(req, res, error);
     try { await deleteObject(row.storage_key); } catch (e) { /* best-effort R2 cleanup */ }
 
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -562,7 +563,7 @@ router.put('/baker/storefront-photos', requireAuth, requireCapability('store:man
     }
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -576,10 +577,10 @@ async function setPublished(req, res, published) {
     if (!contact) return res.status(404).json({ error: 'No baker account found' });
     const { error } = await supabase.from('bakers')
       .update({ storefront_published: published }).eq('id', contact.baker_id);
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return serverError(req, res, error);
     res.json({ ok: true, storefront_published: published });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 }
 router.post('/baker/storefront/publish',   requireAuth, requireCapability('store:manage'), requireEntitlement('storefront'), (req, res) => setPublished(req, res, true));
@@ -598,10 +599,10 @@ router.get('/baker/testimonials', requireAuth, async (req, res) => {
       .select('id, quote, author, occasion, sort_order')
       .eq('baker_id', contact.baker_id)
       .order('sort_order');
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return serverError(req, res, error);
     res.json({ testimonials: data ?? [] });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -623,15 +624,15 @@ router.put('/baker/testimonials', requireAuth, requireCapability('store:manage')
 
     const { error: delErr } = await supabase
       .from('baker_testimonials').delete().eq('baker_id', contact.baker_id);
-    if (delErr) return res.status(500).json({ error: delErr.message });
+    if (delErr) return serverError(req, res, delErr);
 
     if (rows.length) {
       const { error: insErr } = await supabase.from('baker_testimonials').insert(rows);
-      if (insErr) return res.status(500).json({ error: insErr.message });
+      if (insErr) return serverError(req, res, insErr);
     }
     res.json({ ok: true, count: rows.length });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -653,7 +654,7 @@ router.get('/baker/settings', requireAuth, async (req, res) => {
 
     res.json(baker.settings ?? {});
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -670,11 +671,11 @@ router.put('/baker/settings', requireAuth, requireCapability('store:manage'), as
       .from('bakers')
       .update({ settings: req.body })
       .eq('id', contact.baker_id);
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return serverError(req, res, error);
 
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -708,7 +709,7 @@ router.get('/baker/flavours', requireAuth, async (req, res) => {
       id: f.id, name: f.name, description: f.description, excluded: excluded.has(f.id),
     })));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -736,17 +737,17 @@ router.put('/baker/flavours/exclusions', requireAuth, requireCapability('store:m
     // Replace the set: clear this baker's exclusions, then insert the new ones.
     const { error: delErr } = await supabase
       .from('baker_flavour_exclusions').delete().eq('baker_id', contact.baker_id);
-    if (delErr) return res.status(500).json({ error: delErr.message });
+    if (delErr) return serverError(req, res, delErr);
 
     if (ids.length) {
       const rows = ids.map(flavour_id => ({ baker_id: contact.baker_id, flavour_id }));
       const { error: insErr } = await supabase.from('baker_flavour_exclusions').insert(rows);
-      if (insErr) return res.status(500).json({ error: insErr.message });
+      if (insErr) return serverError(req, res, insErr);
     }
 
     res.json({ ok: true, excluded_count: ids.length });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -756,10 +757,10 @@ router.get('/admin/bakers', requireAuth, requireCapability('baker:onboard'), asy
       .from('bakers')
       .select('id, name, slug, email, subscription_status_id, is_active, created_at')
       .order('created_at', { ascending: false });
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return serverError(req, res, error);
     res.json(data);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 

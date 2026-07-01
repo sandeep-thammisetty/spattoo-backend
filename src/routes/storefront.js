@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { serverError } from '../lib/httpError.js';
 import { supabase, supabaseAuth } from '../services/supabase.js';
 import { config } from '../config.js';
 import { getOrderAcceptance } from '../services/entitlements.js';
@@ -61,7 +62,7 @@ router.get('/storefront/:slug', async (req, res) => {
       .eq('is_active', true)
       .maybeSingle();
 
-    if (error)  return res.status(500).json({ error: error.message });
+    if (error)  return serverError(req, res, error);
     if (!baker) return res.status(404).json({ error: 'Storefront not found' });
     // Draft storefronts are not publicly visible until the baker hits Publish.
     if (!baker.storefront_published) return res.status(404).json({ error: 'No storefront available' });
@@ -99,7 +100,7 @@ router.get('/storefront/:slug', async (req, res) => {
       phone:            owner?.phone ?? null,
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -115,7 +116,7 @@ router.get('/storefront/:slug/settings', async (req, res) => {
       .eq('slug', req.params.slug)
       .eq('is_active', true)
       .maybeSingle();
-    if (error)  return res.status(500).json({ error: error.message });
+    if (error)  return serverError(req, res, error);
     if (!baker || !baker.storefront_published) return res.status(404).json({ error: 'Storefront not found' });
 
     const s = baker.settings ?? {};
@@ -124,7 +125,7 @@ router.get('/storefront/:slug/settings', async (req, res) => {
       store_hours: s.store_hours ?? null,
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -152,7 +153,7 @@ router.get('/invite/:id', async (req, res) => {
       .eq('id', req.params.id)
       .maybeSingle();
 
-    if (error)   return res.status(500).json({ error: error.message });
+    if (error)   return serverError(req, res, error);
     if (!invite) return res.status(404).json({ error: 'Invite not found' });
 
     const expired = invite.expires_at != null && new Date(invite.expires_at) < new Date();
@@ -187,7 +188,7 @@ router.get('/invite/:id', async (req, res) => {
       },
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -216,7 +217,7 @@ router.post('/invite/:id/send-otp', sendOtpPerInvite, sendOtpPerIp, async (req, 
     }
     res.json({ sent: true, channel });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -274,7 +275,7 @@ router.post('/invite/:id/verify-otp', verifyOtpPerInvite, async (req, res) => {
       baker_slug:  invite.bakers?.slug,
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 

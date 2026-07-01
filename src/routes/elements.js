@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { serverError } from '../lib/httpError.js';
 import express from 'express';
 import { supabase } from '../services/supabase.js';
 import { requireAuth } from '../middleware/auth.js';
@@ -76,10 +77,10 @@ router.get('/element-types', requireAuth, requireCapability('design:create'), as
       .eq('is_active', true)
       .order('sort_order');
 
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return serverError(req, res, error);
     res.json(data);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -90,10 +91,10 @@ router.get('/admin/element-types', requireAuth, requireCapability('catalog:admin
       .select('id, slug, name, description, placement_rules, sort_order, is_active')
       .order('sort_order');
 
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return serverError(req, res, error);
     res.json(data);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -108,10 +109,10 @@ router.post('/admin/element-types', requireAuth, requireCapability('catalog:admi
       .select('id, slug, name, description, placement_rules, sort_order, is_active')
       .single();
 
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return serverError(req, res, error);
     res.status(201).json(data);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -127,10 +128,10 @@ router.patch('/admin/element-types/:id', requireAuth, requireCapability('catalog
       .select('id, slug, name, description, placement_rules, sort_order, is_active')
       .single();
 
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return serverError(req, res, error);
     res.json(data);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -155,7 +156,7 @@ router.get('/elements', requireAuth, requireCapability('design:create'), async (
       if (element_type_id) query = query.eq('element_type_id', element_type_id);
 
       const { data, error } = await query;
-      if (error) return res.status(500).json({ error: error.message });
+      if (error) return serverError(req, res, error);
       return res.json(data.map(el => ({
         ...el,
         image_url:        toPublicUrl(el.image_url),
@@ -178,7 +179,7 @@ router.get('/elements', requireAuth, requireCapability('design:create'), async (
     if (element_type_id) query = query.eq('element_type_id', element_type_id);
 
     const { data, error } = await query;
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return serverError(req, res, error);
 
     res.json(data.map(el => ({
       ...el,
@@ -188,7 +189,7 @@ router.get('/elements', requireAuth, requireCapability('design:create'), async (
       placement_config: expandPlacementConfig(el.placement_config),
     })));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -204,7 +205,7 @@ router.post(
       res.set('Content-Type', 'image/png');
       res.send(pngBuffer);
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      serverError(req, res, err);
     }
   }
 );
@@ -217,7 +218,7 @@ router.get('/admin/elements', requireAuth, requireCapability('catalog:admin'), a
       .is('baker_id', null)
       .order('sort_order');
 
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return serverError(req, res, error);
     res.json(data.map(el => ({
       ...el,
       asset_class:   ASSET_CLASS_KEY[el.asset_class] ?? null,
@@ -226,7 +227,7 @@ router.get('/admin/elements', requireAuth, requireCapability('catalog:admin'), a
       thumb_key:     toPublicUrl(el.thumb_key),
     })));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -260,7 +261,7 @@ router.patch('/admin/elements/:id', requireAuth, requireCapability('catalog:admi
       .select('id')
       .single();
 
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return serverError(req, res, error);
     res.json(data);
     // Re-index when something that affects the search text/embedding changed. Fire-and-forget.
     if (['name', 'description', 'thumbnail_url', 'image_url'].some(k => k in updates))
@@ -268,7 +269,7 @@ router.patch('/admin/elements/:id', requireAuth, requireCapability('catalog:admi
     // Regenerate the optimised WebP thumbnail when the raw thumbnail changed. Fire-and-forget.
     if ('thumbnail_url' in updates) ensureThumbKey(id, updates.thumbnail_url);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -301,7 +302,7 @@ router.post('/admin/elements', requireAuth, requireCapability('catalog:admin'), 
       .select('id')
       .single();
 
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return serverError(req, res, error);
 
     res.status(201).json({ id: data.id });
     // Index for inspiration matching (fills an empty description + embeds). Fire-and-forget.
@@ -309,7 +310,7 @@ router.post('/admin/elements', requireAuth, requireCapability('catalog:admin'), 
     // Generate the optimised WebP picker thumbnail (raw PNG stays as the source). Fire-and-forget.
     ensureThumbKey(data.id, thumbnail_url);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -393,7 +394,7 @@ Return ONLY valid JSON, no explanation:
     res.json({ names: suffixed, description });
   } catch (err) {
     console.error('suggest error:', err.message, err.stack);
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 

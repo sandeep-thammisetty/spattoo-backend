@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { serverError } from '../lib/httpError.js';
 import { supabase } from '../services/supabase.js';
 import { requireAuth } from '../middleware/auth.js';
 import { resolvePrincipal, requireCapability } from '../middleware/rbac.js';
@@ -26,15 +27,15 @@ const ADMIN = [requireAuth, requireCapability('admin:manage')];
 
 // ── GET /api/admin/rbac ───────────────────────────────────────────────────────
 // Roles, capabilities, and the matrix the screen renders/edits.
-router.get('/admin/rbac', ...ADMIN, async (_req, res) => {
+router.get('/admin/rbac', ...ADMIN, async (req, res) => {
   const [roles, capabilities, map] = await Promise.all([
     supabase.from('roles').select('*').order('sort_order'),
     supabase.from('capabilities').select('*').order('sort_order'),
     supabase.from('role_capabilities').select('role_key, capability_key'),
   ]);
-  if (roles.error)        return res.status(500).json({ error: roles.error.message });
-  if (capabilities.error) return res.status(500).json({ error: capabilities.error.message });
-  if (map.error)          return res.status(500).json({ error: map.error.message });
+  if (roles.error)        return serverError(req, res, roles.error);
+  if (capabilities.error) return serverError(req, res, capabilities.error);
+  if (map.error)          return serverError(req, res, map.error);
 
   // matrix: { [roleKey]: [capabilityKey, ...] }
   const matrix = {};
@@ -67,8 +68,8 @@ router.post('/admin/capabilities', ...ADMIN, async (req, res) => {
     .select()
     .single();
   if (error) {
-    const status = error.code === '23505' ? 409 : 500; // unique_violation
-    return res.status(status).json({ error: error.message });
+    if (error.code === '23505') return res.status(409).json({ error: 'That capability key already exists' }); // unique_violation
+    return serverError(req, res, error);
   }
   res.status(201).json(data);
 });
@@ -96,12 +97,12 @@ router.put('/admin/roles/:roleKey/capabilities', ...ADMIN, async (req, res) => {
 
   // Replace: clear then insert the new set.
   const del = await supabase.from('role_capabilities').delete().eq('role_key', roleKey);
-  if (del.error) return res.status(500).json({ error: del.error.message });
+  if (del.error) return serverError(req, res, del.error);
 
   if (next.length) {
     const rows = [...new Set(next)].map(capability_key => ({ role_key: roleKey, capability_key }));
     const ins = await supabase.from('role_capabilities').insert(rows);
-    if (ins.error) return res.status(500).json({ error: ins.error.message });
+    if (ins.error) return serverError(req, res, ins.error);
   }
 
   res.json({ role_key: roleKey, capabilities: [...new Set(next)] });

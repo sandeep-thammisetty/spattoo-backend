@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { serverError } from '../lib/httpError.js';
 import { supabase } from '../services/supabase.js';
 import { requireAuth } from '../middleware/auth.js';
 import { requireCapability } from '../middleware/rbac.js';
@@ -241,7 +242,7 @@ router.get('/flavours', async (req, res) => {
 
     res.json(result);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -264,7 +265,7 @@ router.post('/orders', async (req, res) => {
       .eq('is_active', true)
       .maybeSingle();
 
-    if (bakerError) return res.status(500).json({ error: bakerError.message });
+    if (bakerError) return serverError(req, res, bakerError);
     if (!baker)     return res.status(404).json({ error: 'Baker not found' });
 
     const bakerId = baker.id;
@@ -301,7 +302,7 @@ router.post('/orders', async (req, res) => {
         .select('id')
         .single();
 
-      if (customerError) return res.status(500).json({ error: customerError.message });
+      if (customerError) return serverError(req, res, customerError);
       existingCustomer = newCustomer;
     }
 
@@ -314,7 +315,7 @@ router.post('/orders', async (req, res) => {
 
     res.status(201).json({ orderId: order.id, createdAt: order.created_at });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -342,7 +343,7 @@ router.post('/customer/orders', requireAuth, async (req, res) => {
       .eq('slug', bakerSlug)
       .eq('is_active', true)
       .maybeSingle();
-    if (bakerError) return res.status(500).json({ error: bakerError.message });
+    if (bakerError) return serverError(req, res, bakerError);
     if (!baker)     return res.status(404).json({ error: 'Baker not found' });
 
     // ── Trial / order-cap gate (block before creating anything) ─────────────
@@ -358,7 +359,7 @@ router.post('/customer/orders', requireAuth, async (req, res) => {
       .eq('baker_id', baker.id)
       .eq('auth_user_id', req.user.id)
       .maybeSingle();
-    if (custErr) return res.status(500).json({ error: custErr.message });
+    if (custErr) return serverError(req, res, custErr);
     if (!customer || customer.is_active === false) {
       return res.status(403).json({ error: 'Not a customer of this baker' });
     }
@@ -372,7 +373,7 @@ router.post('/customer/orders', requireAuth, async (req, res) => {
 
     res.status(201).json({ orderId: order.id, createdAt: order.created_at });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -396,11 +397,11 @@ router.get('/customer/orders', requireAuth, async (req, res) => {
       .from('orders').select(CUSTOMER_ORDER_FIELDS)
       .eq('baker_id', baker.id).eq('customer_id', customer.id)
       .order('created_at', { ascending: false });
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return serverError(req, res, error);
 
     res.json((data ?? []).map(toCustomerOrder));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -411,7 +412,7 @@ router.get('/customer/orders/:id', requireAuth, async (req, res) => {
     if (error) return res.status(status).json({ error });
     res.json(toCustomerOrder(order));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -436,7 +437,7 @@ router.post('/customer/orders/:id/accept', requireAuth, async (req, res) => {
       .eq('id', order.id)
       .select(CUSTOMER_ORDER_FIELDS)
       .maybeSingle();
-    if (uErr) return res.status(500).json({ error: uErr.message });
+    if (uErr) return serverError(req, res, uErr);
 
     await supabase.from('order_audit_log').insert({
       order_id: order.id, baker_id: order.baker_id,
@@ -455,7 +456,7 @@ router.post('/customer/orders/:id/accept', requireAuth, async (req, res) => {
 
     res.json(toCustomerOrder(updated));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -476,7 +477,7 @@ router.post('/customer/orders/:id/decline', requireAuth, async (req, res) => {
     const { data: updated, error: uErr } = await supabase
       .from('orders').update({ status_id: await idForKey('cancelled') })
       .eq('id', order.id).select(CUSTOMER_ORDER_FIELDS).maybeSingle();
-    if (uErr) return res.status(500).json({ error: uErr.message });
+    if (uErr) return serverError(req, res, uErr);
 
     await supabase.from('order_audit_log').insert({
       order_id: order.id, baker_id: order.baker_id,
@@ -487,7 +488,7 @@ router.post('/customer/orders/:id/decline', requireAuth, async (req, res) => {
 
     res.json(toCustomerOrder(updated));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -517,7 +518,7 @@ router.post('/customer/orders/:id/message', requireAuth, async (req, res) => {
 
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -558,11 +559,11 @@ router.get('/orders', requireAuth, requireCapability('order:view'), async (req, 
     if (req.query.customer_id)   query = query.eq('customer_id', req.query.customer_id);
 
     const { data, error } = await query;
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return serverError(req, res, error);
 
     res.json(data.map(o => ({ ...withStatusKey(o), design_thumbnail_url: toPublicUrl(o.design_thumbnail_url), quote_stale: quoteStale(o) })));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -590,12 +591,12 @@ router.get('/orders/:id', requireAuth, requireCapability('order:view'), async (r
       .eq('baker_id', appUser.baker_id)
       .maybeSingle();
 
-    if (error)  return res.status(500).json({ error: error.message });
+    if (error)  return serverError(req, res, error);
     if (!order) return res.status(404).json({ error: 'Order not found' });
 
     res.json({ ...withStatusKey(order), quote_stale: quoteStale(order) });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -607,7 +608,7 @@ router.get('/order-statuses', async (req, res) => {
   try {
     res.json(await getOrderStatuses());
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -648,7 +649,7 @@ router.patch('/orders/:id/status', requireAuth, requireCapability('order:manage'
     const { data: order, error } = await supabase
       .from('orders').update(updates).eq('id', req.params.id).eq('baker_id', appUser.baker_id)
       .select('id, status_id, order_statuses ( key ), approved_at, priced_at, quoted_version_id, current_version_id').maybeSingle();
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return serverError(req, res, error);
 
     await supabase.from('order_audit_log').insert({
       order_id: req.params.id, baker_id: appUser.baker_id,
@@ -701,7 +702,7 @@ router.patch('/orders/:id/status', requireAuth, requireCapability('order:manage'
 
     res.json(withStatusKey(order));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -733,10 +734,10 @@ router.get('/orders/:id/photos', requireAuth, requireCapability('order:manage'),
     const { data: rows, error } = await supabase
       .from('order_finished_photos').select('id, key, sort_order')
       .eq('order_id', req.params.id).order('sort_order', { ascending: true });
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return serverError(req, res, error);
     res.json((rows ?? []).map(r => ({ id: r.id, sort_order: r.sort_order, url: toPublicUrl(r.key) })));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -769,12 +770,12 @@ router.post('/orders/:id/photos', requireAuth, requireCapability('order:manage')
       }));
       const { data, error } = await supabase
         .from('order_finished_photos').insert(rows).select('id, key, sort_order');
-      if (error) return res.status(500).json({ error: error.message });
+      if (error) return serverError(req, res, error);
       inserted = data ?? [];
     }
     res.json(inserted.map(r => ({ id: r.id, sort_order: r.sort_order, url: toPublicUrl(r.key) })));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -791,7 +792,7 @@ router.delete('/orders/:id/photos/:photoId', requireAuth, requireCapability('ord
     await deleteObject(row.key).catch(err => console.error('[orders] photo object delete failed:', err.message));
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -844,7 +845,7 @@ router.post('/orders/:id/quote', requireAuth, requireCapability('order:manage'),
       .eq('id', req.params.id).eq('baker_id', appUser.baker_id)
       .select('id, status_id, order_statuses ( key ), quoted_price, quote_line_items, quote_valid_until, advance_amount, quote_note, priced_at, quoted_version_id, current_version_id')
       .maybeSingle();
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return serverError(req, res, error);
 
     const noteVal = (note ?? '').toString().trim() || null;
     await supabase.from('order_audit_log').insert({
@@ -867,7 +868,7 @@ router.post('/orders/:id/quote', requireAuth, requireCapability('order:manage'),
     // Freshly pinned to the current version → never stale right after issuing.
     res.json({ ...withStatusKey(order), quote_stale: false });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -937,7 +938,7 @@ router.patch('/orders/:id', requireAuth, requireCapability('order:manage'), asyn
     const { data: order, error } = await supabase
       .from('orders').update(updates).eq('id', req.params.id).eq('baker_id', appUser.baker_id)
       .select('id, ' + EDITABLE_FIELDS.join(', ')).maybeSingle();
-    if (error) return res.status(500).json({ error: `Update failed: ${error.message}` });
+    if (error) return serverError(req, res, error);
     if (!order) return res.status(404).json({ error: 'Order not found after update' });
 
     const { error: auditError } = await supabase.from('order_audit_log').insert({
@@ -949,7 +950,7 @@ router.patch('/orders/:id', requireAuth, requireCapability('order:manage'), asyn
 
     res.json(order);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -1009,7 +1010,7 @@ router.patch('/orders/:id/design', requireAuth, requireCapability('order:manage'
 
     res.json({ orderId: req.params.id, versionNo: version.version_no, designThumbnailUrl: toPublicUrl(thumbnailKey) });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -1030,11 +1031,11 @@ router.get('/orders/:id/versions', requireAuth, requireCapability('order:view'),
       .select('id, version_no, design_thumbnail_url, authored_by, created_at')
       .eq('order_id', req.params.id)
       .order('version_no', { ascending: false });
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return serverError(req, res, error);
 
     res.json((data ?? []).map(v => ({ ...v, design_thumbnail_url: toPublicUrl(v.design_thumbnail_url) })));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 
@@ -1054,11 +1055,11 @@ router.get('/orders/:id/audit', requireAuth, requireCapability('order:view'), as
     const { data, error } = await supabase
       .from('order_audit_log').select('id, event, comment, changes, changed_by_name, changed_at')
       .eq('order_id', req.params.id).order('changed_at', { ascending: false });
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return serverError(req, res, error);
 
     res.json(data);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(req, res, err);
   }
 });
 

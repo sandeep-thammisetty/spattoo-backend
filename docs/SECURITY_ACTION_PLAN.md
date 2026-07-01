@@ -49,13 +49,14 @@ forget — see SEC-1, SEC-11). The RBAC model is sound: a separate `admins` tabl
 
 ## 🟠 High
 
-- [ ] **SEC-2 — `/api/storage/delete` cross-tenant object deletion (IDOR).**
-  `src/routes/storage.js:58` — accepts an arbitrary R2 `key`, checks only that it's under a managed
-  folder, never that it belongs to the caller (cap `design:create`, held by bakers **and** customers).
-  Gallery/logo keys are publicly discoverable via `GET /api/storefront/:slug`, so baker A can delete
-  competitor B's logo/gallery objects (DB rows survive → broken images on B's live site).
-  **Fix:** only allow deleting keys that match a row the caller owns (`baker_storefront_photos`,
-  `order_finished_photos`, …); reject any other key.
+- [x] **SEC-2 — `/api/storage/delete` cross-tenant object deletion (IDOR). ✅ DONE.**
+  Was gated by `design:create` (bakers + customers) with no ownership check, so any baker could delete
+  another tenant's publicly-discoverable logo/gallery keys. **Fix (`src/routes/storage.js`):** changed
+  the guard to **`requireAdmin`**. Its only real caller is the admin catalog UI (`ManageElements`);
+  baker/customer asset deletion already goes through owner-scoped endpoints
+  (`DELETE /baker/storefront-photos/:id`, order-photo deletes), so nothing baker-facing breaks. Bakers/
+  customers can no longer reach this route → IDOR closed. (Chose admin-gating over per-row ownership
+  checks because there is no legitimate baker/customer caller.)
 
 - [ ] **SEC-3 — Unescaped user data in transactional emails (stored, cross-tenant injection).**
   `src/jobs/processors/sendNotification.js`, `src/services/email.js` — customer/baker-controlled fields

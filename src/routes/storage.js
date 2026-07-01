@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { getSignedUploadUrl, deleteObject } from '../services/r2.js';
 import { requireAuth } from '../middleware/auth.js';
-import { requireCapability } from '../middleware/rbac.js';
+import { requireCapability, requireAdmin } from '../middleware/rbac.js';
 import { config } from '../config.js';
 
 const router = Router();
@@ -55,7 +55,12 @@ function toKey(raw) {
   return k.replace(/^\/+/, '');
 }
 
-router.post('/storage/delete', requireAuth, requireCapability('design:create'), async (req, res) => {
+// SEC-2: ADMIN-only. This deletes arbitrary managed-folder objects with no per-tenant ownership
+// check, so it must not be reachable by bakers/customers (they could delete another tenant's logo/
+// gallery via publicly-discoverable keys). Its only real caller is the admin catalog UI
+// (ManageElements). Baker/customer asset deletion goes through owner-scoped endpoints
+// (DELETE /baker/storefront-photos/:id, order photo deletes) — never this route.
+router.post('/storage/delete', requireAuth, requireAdmin, async (req, res) => {
   try {
     const key = toKey(req.body?.key);
     if (!key) return res.status(400).json({ error: 'key is required' });

@@ -4,6 +4,7 @@ import { supabase } from '../services/supabase.js';
 import { deleteObject } from '../services/r2.js';
 import { enqueueLogoBgRemoval } from '../jobs/processors/removeLogoBg.js';
 import { enqueueOptimizePhoto } from '../jobs/processors/optimizePhoto.js';
+import { optimizeImageToWebp } from '../services/imageOptimize.js';
 import { requireAuth } from '../middleware/auth.js';
 import { requireCapability, resolveCustomer } from '../middleware/rbac.js';
 import { config } from '../config.js';
@@ -467,6 +468,21 @@ router.post('/baker/storefront-photos', requireAuth, requireCapability('store:ma
     enqueueOptimizePhoto(data.id, data.storage_key);
 
     res.json({ id: data.id, key: data.storage_key, url: toPublicUrl(data.storage_key), caption: data.caption, sort_order: data.sort_order });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── POST /api/baker/storefront-image ──────────────────────────────────────────
+// Convert an already-uploaded storefront content image (e.g. a Highlight band photo, which lives in
+// storefront_customizations jsonb — not a photo row) to an optimised WebP; return its public URL.
+// Synchronous so the customiser can store the final URL immediately. Body: { key | storage_key }.
+router.post('/baker/storefront-image', requireAuth, requireCapability('store:manage'), async (req, res) => {
+  try {
+    const key = req.body?.key || req.body?.storage_key;
+    if (!key) return res.status(400).json({ error: 'key is required' });
+    const newKey = await optimizeImageToWebp(key);
+    res.json({ key: newKey, url: toPublicUrl(newKey) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

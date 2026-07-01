@@ -1,4 +1,7 @@
-import { parsePhoneNumberFromString } from 'libphonenumber-js';
+// Use the FULL ("max") metadata, not the default "min" bundle — "min" only does loose
+// length checks and wrongly accepts junk like "123123123" / over-length numbers for IN.
+// "max" enforces real per-country patterns (India = 10 digits, valid prefix).
+import { parsePhoneNumberFromString } from 'libphonenumber-js/max';
 
 // Normalise a free-text phone number into canonical E.164 + ISO-3166 country.
 // Single source of truth for phone validation across every write path (admin

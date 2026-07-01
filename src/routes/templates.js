@@ -42,12 +42,14 @@ router.get('/templates', requireAuth, requireCapability('design:create'), attach
       // Baker: global templates + their own
       query = query.or(`baker_id.is.null,baker_id.eq.${req.bakerId}`);
     } else {
-      // Admin: optionally scope to a baker's view via ?baker_id=X
-      const scopedId = req.query.baker_id;
-      if (scopedId) {
+      // Admin: optionally scope to a baker's view via ?baker_id=X.
+      // SEC-10: coerce to an integer before interpolating into the filter — a raw string param
+      // would inject PostgREST `.or()` syntax. Invalid/absent → unfiltered (admin sees all).
+      const scopedId = Number.parseInt(req.query.baker_id, 10);
+      if (Number.isInteger(scopedId)) {
         query = query.or(`baker_id.is.null,baker_id.eq.${scopedId}`);
       }
-      // No baker_id param → admin sees all templates unfiltered
+      // No valid baker_id param → admin sees all templates unfiltered
     }
 
     const { data, error } = await query;

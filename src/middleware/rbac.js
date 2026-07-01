@@ -61,16 +61,22 @@ export async function loadPrincipal(user) {
 // gated by a currently-valid invite. Returns { customer_id, baker_id } or null.
 // MVP: if valid invites exist for more than one baker, the most recent wins.
 export async function resolveCustomer(user) {
-  const orParts = [];
-  if (user.email) orParts.push(`email.eq.${user.email}`);
-  if (user.phone) orParts.push(`phone.eq.${user.phone}`);
-  if (!orParts.length) return null;
+  if (!user.email && !user.phone) return null;
 
-  const { data: customers } = await supabase
-    .from('customers')
-    .select('id, first_name, last_name')
-    .or(orParts.join(','));
-  if (!customers?.length) return null;
+  // SEC-10: match with parameterised `.eq` (encoded by supabase-js), NEVER a string-built `.or()`
+  // — a crafted verified email/phone could otherwise inject PostgREST filter syntax and broaden the
+  // customer match. Two lookups (email, phone) merged + de-duped preserves the "email OR phone" set.
+  const byId = new Map();
+  const collect = async (column, value) => {
+    const { data } = await supabase
+      .from('customers').select('id, first_name, last_name').eq(column, value);
+    for (const c of data ?? []) byId.set(c.id, c);
+  };
+  if (user.email) await collect('email', user.email);
+  if (user.phone) await collect('phone', user.phone);
+
+  const customers = [...byId.values()];
+  if (!customers.length) return null;
 
   const nowIso = new Date().toISOString();
   const { data: invites } = await supabase

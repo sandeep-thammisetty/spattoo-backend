@@ -150,12 +150,18 @@ forget — see SEC-1, SEC-11). The RBAC model is sound: a separate `admins` tabl
   **Fix:** `next(err)` to the central handler on 5xx (mask to generic + request id); keep 4xx validation
   messages.
 
-- [ ] **SEC-10 — PostgREST `.or()` filter injection from user input.**
-  `src/services/bakerProvisioning.js:60-63` builds `.or('phone.eq.${p},email.eq.${e}')` from signup input;
-  crafted `,`/`.`/`)` can alter the owner-uniqueness match. Also `src/routes/templates.js:47` (`baker_id`
-  query param interpolated).
-  **Fix:** validate/normalize email + phone before building the filter (or use two `.eq` queries); coerce
-  `baker_id` to an integer.
+- [x] **SEC-10 — PostgREST `.or()` filter injection from user input. ✅ DONE.**
+  Was: `.or()` filters built by string-interpolating user-controlled values, so crafted `,`/`)`/`.`
+  could alter the match. **Fix — converted every user-value filter off string-built `.or()`:**
+  - `src/services/bakerProvisioning.js` (`findAppuserByIdentity`, the owner-uniqueness check) → two
+    parameterised `.eq` lookups (phone-first, preserving `matchedOn` semantics); supabase-js encodes
+    `.eq` values so injection is impossible.
+  - `src/middleware/rbac.js` (`resolveCustomer`, customer login match — same class, not in the original
+    finding) → two `.eq` lookups merged + de-duped (preserves "email OR phone").
+  - `src/routes/templates.js` (admin `?baker_id`) → `Number.parseInt` coercion; non-integer → ignored
+    (admin sees all). `parseInt('5)inject') → 5`, so trailing syntax is dropped.
+  Remaining `.or()` interpolations use only the **server-resolved** `req.bakerId` (an int) — not user
+  input — so they're safe (documented in `lib/tenantScope.js`). Coercion verified.
 
 ---
 

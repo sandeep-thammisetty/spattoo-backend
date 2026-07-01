@@ -56,17 +56,22 @@ export async function findAppuserByIdentity({ email, phone, primaryOnly = false 
   const p = phone || null;
   if (!e && !p) return null;
 
-  const orParts = [];
-  if (p) orParts.push(`phone.eq.${p}`);
-  if (e) orParts.push(`email.eq.${e}`);
+  // SEC-10: match with parameterised `.eq` (supabase-js encodes the value), NEVER a string-built
+  // `.or('email.eq.<raw>')`. A crafted email/phone (e.g. containing `,` or `)`) would otherwise
+  // inject PostgREST filter syntax and could bypass or broaden this owner-uniqueness check.
+  // Phone is checked first so `matchedOn` keeps its prior phone-priority semantics.
+  const lookup = async (column, value) => {
+    let q = supabase.from('baker_appusers').select('baker_id, email, phone').eq(column, value);
+    if (primaryOnly) q = q.eq('is_primary', true);
+    const { data } = await q.limit(1);
+    return data?.[0] ?? null;
+  };
 
-  let q = supabase.from('baker_appusers').select('baker_id, email, phone').or(orParts.join(','));
-  if (primaryOnly) q = q.eq('is_primary', true);
-  const { data: rows } = await q.limit(1);
-  const row = rows?.[0];
+  let row = null, matchedOn = null;
+  if (p)          { row = await lookup('phone', p); if (row) matchedOn = 'phone'; }
+  if (!row && e)  { row = await lookup('email', e); if (row) matchedOn = 'email'; }
   if (!row) return null;
 
-  const matchedOn = (p && row.phone === p) ? 'phone' : 'email';
   const { data: baker } = await supabase
     .from('bakers').select('name').eq('id', row.baker_id).maybeSingle();
   return { id: row.baker_id, name: baker?.name, matchedOn };

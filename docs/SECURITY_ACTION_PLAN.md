@@ -125,12 +125,18 @@ forget — see SEC-1, SEC-11). The RBAC model is sound: a separate `admins` tabl
   this no-charge path). No legitimate flow breaks (signup defaults to Spark via `createBakerForUser`, not
   this endpoint).
 
-- [ ] **SEC-7 — Cross-tenant reads of private catalog data.**
-  `GET /templates/:id` (`src/routes/templates.js:75`) has no `baker_id` filter (the list route does) →
-  a baker can read another baker's private template by id. `GET /elements`
-  (`src/routes/elements.js:163`) has no `baker_id` filter → will leak baker-private elements once the
-  per-baker library exists (latent today).
-  **Fix:** apply `baker_id IS NULL OR baker_id = <caller>` in both; 404 otherwise.
+- [x] **SEC-7 — Cross-tenant reads of private catalog data. ✅ DONE.**
+  Was: `GET /templates/:id` had no `baker_id` filter (the list route did) → a baker could read another
+  baker's private template by id; `GET /elements` (both branches) had none → would leak baker-private
+  elements once the per-baker library exists (latent). **Fix:** new shared helper
+  `src/lib/tenantScope.js → scopeCatalogRead(query, req)` applies `baker_id IS NULL OR baker_id =
+  <caller's tenant>` (admins bypass; no-tenant callers get global only), keyed on the **server-resolved**
+  `req.bakerId` (never a client value → not injection-prone). Applied to `GET /templates/:id` and both
+  branches of `GET /elements`. A template owned by another baker now returns **404** (same as a
+  nonexistent id → no enumeration leak). Kept as ONE helper rather than pasted per route — the exact
+  duplication class that let this exist (list routes scoped, by-id routes not); this is a down payment
+  on SEC-14. Branch behaviour unit-verified (baker/customer → own+global, no-tenant → global, admin →
+  unrestricted).
 
 - [ ] **SEC-8 — Wide-open CORS.**
   `src/server.js:29` `app.use(cors())` reflects `*`. Not credentialed-CORS ATO (Bearer auth), but it lets

@@ -3,6 +3,7 @@ import express from 'express';
 import { supabase } from '../services/supabase.js';
 import { requireAuth } from '../middleware/auth.js';
 import { requireCapability } from '../middleware/rbac.js';
+import { scopeCatalogRead } from '../lib/tenantScope.js';
 import { config } from '../config.js';
 import { removeBackground } from '../services/removebg.js';
 import { jobQueue } from '../jobs/queue.js';
@@ -140,12 +141,16 @@ router.get('/elements', requireAuth, requireCapability('design:create'), async (
     const ELEM_FIELDS = 'id, name, description, image_url, thumbnail_url, thumb_key, element_type_id, allowed_zones, placement_config, allowed_actions, default_color, sort_order';
 
     if (parents_only === 'true') {
-      let query = supabase
-        .from('cake_elements')
-        .select(ELEM_FIELDS)
-        .eq('is_active', true)
-        .is('parent_id', null)
-        .order('sort_order');
+      // SEC-7: global elements + the caller's own tenant only (never another baker's private lib).
+      let query = scopeCatalogRead(
+        supabase
+          .from('cake_elements')
+          .select(ELEM_FIELDS)
+          .eq('is_active', true)
+          .is('parent_id', null)
+          .order('sort_order'),
+        req,
+      );
 
       if (element_type_id) query = query.eq('element_type_id', element_type_id);
 
@@ -160,11 +165,15 @@ router.get('/elements', requireAuth, requireCapability('design:create'), async (
       })));
     }
 
-    let query = supabase
-      .from('cake_elements')
-      .select(`${ELEM_FIELDS}, baker_id, parent_id`)
-      .eq('is_active', true)
-      .order('sort_order');
+    // SEC-7: global elements + the caller's own tenant only (never another baker's private lib).
+    let query = scopeCatalogRead(
+      supabase
+        .from('cake_elements')
+        .select(`${ELEM_FIELDS}, baker_id, parent_id`)
+        .eq('is_active', true)
+        .order('sort_order'),
+      req,
+    );
 
     if (element_type_id) query = query.eq('element_type_id', element_type_id);
 

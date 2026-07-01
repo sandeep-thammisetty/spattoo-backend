@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { supabase } from '../services/supabase.js';
 import { requireAuth, attachBakerContext } from '../middleware/auth.js';
 import { requireCapability } from '../middleware/rbac.js';
+import { scopeCatalogRead } from '../lib/tenantScope.js';
 import { config } from '../config.js';
 import { jobQueue } from '../jobs/queue.js';
 
@@ -74,11 +75,15 @@ router.get('/admin/templates', requireAuth, requireCapability('catalog:admin'), 
 
 router.get('/templates/:id', requireAuth, requireCapability('design:create'), async (req, res) => {
   try {
-    const { data, error } = await supabase
-      .from('cake_templates')
-      .select(`${TEMPLATE_FIELDS}, ${TEMPLATE_FILTER_JOIN}`)
-      .eq('id', req.params.id)
-      .single();
+    // SEC-7: scope by tenant — a baker/customer may read only GLOBAL templates or their own.
+    // Without this, any design:create caller could read another baker's private template by id.
+    const { data, error } = await scopeCatalogRead(
+      supabase
+        .from('cake_templates')
+        .select(`${TEMPLATE_FIELDS}, ${TEMPLATE_FILTER_JOIN}`)
+        .eq('id', req.params.id),
+      req,
+    ).single();
 
     if (error) return res.status(404).json({ error: 'Template not found' });
     res.json(withTagsAndAttrs({ ...data, thumbnail_url: toPublicUrl(data.thumbnail_url) }));

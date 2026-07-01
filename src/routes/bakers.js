@@ -3,6 +3,7 @@ import { randomBytes } from 'crypto';
 import { supabase } from '../services/supabase.js';
 import { deleteObject } from '../services/r2.js';
 import { enqueueLogoBgRemoval } from '../jobs/processors/removeLogoBg.js';
+import { enqueueOptimizePhoto } from '../jobs/processors/optimizePhoto.js';
 import { requireAuth } from '../middleware/auth.js';
 import { requireCapability, resolveCustomer } from '../middleware/rbac.js';
 import { config } from '../config.js';
@@ -461,6 +462,9 @@ router.post('/baker/storefront-photos', requireAuth, requireCapability('store:ma
       .select('id, storage_key, caption, sort_order')
       .single();
     if (error) return res.status(500).json({ error: error.message });
+
+    // Convert the uploaded photo to a web-optimised WebP (resize + quality) in the background.
+    enqueueOptimizePhoto(data.id, data.storage_key);
 
     res.json({ id: data.id, key: data.storage_key, url: toPublicUrl(data.storage_key), caption: data.caption, sort_order: data.sort_order });
   } catch (err) {

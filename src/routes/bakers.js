@@ -378,10 +378,7 @@ router.get('/baker/entitlements', requireAuth, async (req, res) => {
       .from('baker_appusers').select('baker_id').eq('auth_user_id', req.user.id).maybeSingle();
     if (!contact?.baker_id) return res.status(404).json({ error: 'No baker account found' });
     const ent = await getEntitlements(contact.baker_id);
-    // Usage alongside the limits, so the client can render "X of N orders used".
-    const { count } = await supabase
-      .from('orders').select('id', { count: 'exact', head: true }).eq('baker_id', contact.baker_id);
-    res.json({ ...ent, usage: { orders_used: count ?? 0 } });
+    res.json(ent);
   } catch (err) {
     serverError(req, res, err);
   }

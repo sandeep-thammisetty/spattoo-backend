@@ -15,7 +15,6 @@ export const ENTITLEMENTS = {
   whatsapp_notifications: { type: 'bool', fallback: false, label: 'WhatsApp notifications (deferred)' },        // #20 — off all tiers; inert
   xray_reports:           { type: 'bool', fallback: false, label: 'X-Ray reports' },
   // numeric limits — null (in a plan's features) = unlimited
-  max_orders_total:       { type: 'int',  fallback: 0, label: 'Max orders (lifetime)' },                        // ALL tiers null — Spark gated by trial window, not order count
   max_team_members:       { type: 'int',  fallback: 1, label: 'Team members' },
   max_saved_templates:    { type: 'int',  fallback: 0, label: 'Saved templates (custom)' },                     // Spark 3 / Flame 30 / Blaze+ unlimited
 };

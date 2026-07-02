@@ -48,18 +48,14 @@ export async function getEntitlements(bakerId) {
   };
 }
 
-// Can this baker accept a NEW order right now? Subscription active (not lapsed past
-// the trial window) AND under the plan's lifetime order cap (max_orders_total; null
-// = unlimited). Shared by the order-intake guard (orders.js) and the storefront
-// "accepting orders" banner (storefront.js) so the two can never drift.
+// Can this baker accept a NEW order right now? Gated ONLY by an active subscription:
+// Spark is "try for a month, then decide" — it lapses past its trial window; paid plans
+// stay active while paying. There is NO order-count cap on ANY plan (the only caps are on
+// other resources — AI tokens, store themes — never orders). Shared by the order-intake
+// guard (orders.js) and the storefront "accepting orders" banner (storefront.js) so the
+// two can never drift.
 export async function getOrderAcceptance(bakerId) {
   const e = await getEntitlements(bakerId);
   if (!e.active) return { accepting: false, code: 'BAKER_INACTIVE' };
-  const cap = e.ent.max_orders_total; // null = unlimited
-  if (cap != null) {
-    const { count } = await supabase
-      .from('orders').select('id', { count: 'exact', head: true }).eq('baker_id', bakerId);
-    if ((count ?? 0) >= cap) return { accepting: false, code: 'ORDER_LIMIT_REACHED' };
-  }
   return { accepting: true, code: null };
 }

@@ -81,19 +81,6 @@ async function getBakerForUser(userId, fields = 'id, name, email, trial_ends_at'
   return baker ?? null;
 }
 
-// ── GET /billing/ping (debug) ─────────────────────────────────────────────────
-router.get('/billing/ping', (req, res) => res.json({ ok: true, ts: Date.now() }));
-
-// ── GET /billing/debug-me (debug) ────────────────────────────────────────────
-router.get('/billing/debug-me', requireAuth, async (req, res) => {
-  const { data: contact, error: cErr } = await supabase
-    .from('baker_appusers').select('baker_id').eq('auth_user_id', req.user.id).maybeSingle();
-  if (cErr || !contact) return res.json({ user_id: req.user.id, contact: null, contact_error: cErr?.message ?? 'no row' });
-  const { data: baker, error: bErr } = await supabase
-    .from('bakers').select('id, subscription_status_id, billing_subscription_id').eq('id', contact.baker_id).single();
-  res.json({ user_id: req.user.id, baker_id: contact.baker_id, baker, baker_error: bErr?.message ?? null });
-});
-
 // ── GET /billing/periods ──────────────────────────────────────────────────────
 router.get('/billing/periods', requireAuth, requireCapability('billing:manage'), async (req, res) => {
   try {

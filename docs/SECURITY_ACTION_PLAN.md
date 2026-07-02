@@ -207,10 +207,16 @@ forget — see SEC-1, SEC-11). The RBAC model is sound: a separate `admins` tabl
 - [x] **SEC-11 — Admin config readable by any authenticated user. ✅ CLOSED by SEC-0a.**
   `GET /admin/entitlements-schema` (`src/routes/subscriptions.js:57`) and `GET /admin/subscription-plans`
   (`:86`) were `requireAuth`-only; now behind the `/api/admin` boundary (`requireAdmin`).
-- [ ] **SEC-12 — Debug endpoints shipped.** `GET /billing/debug-me`, `GET /billing/ping`
-  (`src/routes/billing.js:84, 87`). **Fix:** remove or env-gate.
-- [ ] **SEC-13 — Data bug (not security).** `src/routes/jobs.js:19` writes an auth-user UUID into the
-  `baker_id` column. **Fix:** write the resolved `baker_id`.
+- [x] **SEC-12 — Debug endpoints shipped. ✅ DONE.** `GET /billing/debug-me` (leaked the caller's own
+  baker/subscription state) and `GET /billing/ping` (`src/routes/billing.js`) were debug cruft with no
+  client caller (grep-confirmed across admin/core/web) and no role as a health check — the real health
+  probe is `GET /health` (Render `healthCheckPath`). **Fix:** both removed outright (env-gating would
+  only preserve dead code).
+- [x] **SEC-13 — Data bug (not security). ✅ DONE.** `src/routes/jobs.js` wrote `req.user.id` (a Supabase
+  **auth-user** UUID) into `jobs.baker_id`, which is a FK to `bakers(id)` (a UUID) — both semantically
+  wrong and FK-invalid. `/jobs/extract` is `catalog:admin` (internal admins, no owning baker) and the
+  `extractImage` processor never reads `baker_id`. **Fix:** insert `baker_id: null` — a global/baker-less
+  catalog job, matching the `baker_id IS NULL = global` convention (SEC-7).
 - [ ] **SEC-16 — Front-end URL-scheme sink (`href` without allowlist).** _(spattoo-core / spattoo-web,
   not the API — logged here to keep one security ledger.)_ The React apps auto-escape all HTML bodies
   (JSX; **no** `dangerouslySetInnerHTML`/`innerHTML` anywhere), so the SEC-3 stored-XSS class does **not**
@@ -226,10 +232,13 @@ forget — see SEC-1, SEC-11). The RBAC model is sound: a separate `admins` tabl
 ---
 
 ## Architectural follow-up
-- [ ] **SEC-15 — Relocate `POST /jobs/extract` under `/api/admin`.** It's an admin-only job
-  (`catalog:admin`) but sits outside `/admin`, so the boundary can't backstop it (currently exempt in
-  `check-admin-routes.mjs`; still protected by its per-route cap). Rename to `/admin/jobs/extract` and
-  update the `spattoo-admin` client call, then remove it from the check's `EXEMPT` set.
+- [x] **SEC-15 — Relocate `POST /jobs/extract` under `/api/admin`. ✅ DONE.** Renamed to
+  `POST /admin/jobs/extract` (`src/routes/jobs.js`, mounted at `/api` → full path `/api/admin/jobs/extract`),
+  so the `/api/admin` boundary (`requireAdmin`) now backstops it in addition to its per-route
+  `catalog:admin` cap — consistent with sibling catalog routes. No `spattoo-admin` client update was
+  needed: grep across admin/core/web found **no** caller of `/jobs/extract` (the endpoint had no live
+  client). `EXEMPT` in `check-admin-routes.mjs` is now empty (mechanism kept as the explicit escape-hatch);
+  `npm run check:admin-routes` green with zero exemptions.
 - [ ] **SEC-14 — Shared `assertBakerOwns(table, id)` helper.** The "look up `baker_id` from the token,
   then `.eq('baker_id', …)`" pattern is duplicated ~30×; that duplication is where SEC-2/SEC-7 slipped in.
   One shared helper both reduces risk and matches the project-wide DRY/reuse invariant (root `CLAUDE.md`).

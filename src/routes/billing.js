@@ -12,6 +12,7 @@ import { SUBSCRIPTION_STATUS } from '../constants/subscriptionStatuses.js';
 import { PAYMENT_STATUS }      from '../constants/paymentStatuses.js';
 import { PLAN }                from '../constants/subscriptionPlans.js';
 import { PERIOD }              from '../constants/billingPeriods.js';
+import { CANCELLATION_REASON } from '../constants/cancellationReasons.js';
 
 const router = Router();
 
@@ -68,6 +69,23 @@ function razorpayVerifyWebhook(rawBody, signature) {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+// Close a baker's current active/pending subscription rows because a new one supersedes them
+// (immediate plan switch). Attributes the superseded row so it's auditable. One helper for both
+// subscribe branches (Razorpay + no-keys) — the update was identical in both. NOTE: the subscribe
+// route is the immediate-switch/upgrade path; the deferred-downgrade flow (resubscribe phase) will
+// pass CANCELLATION_REASON.DOWNGRADE.
+async function closeSupersededSubscriptions(bakerId, reasonId, today) {
+  return supabase.from('baker_subscriptions')
+    .update({
+      status_id:                 SUBSCRIPTION_STATUS.CANCELLED,
+      end_date:                  today,
+      cancellation_reason_id:    reasonId,
+      cancellation_requested_at: new Date().toISOString(),
+    })
+    .eq('baker_id', bakerId)
+    .in('status_id', [SUBSCRIPTION_STATUS.ACTIVE, SUBSCRIPTION_STATUS.PENDING]);
+}
+
 async function getBakerForUser(userId, fields = 'id, name, email, trial_ends_at') {
   const { data: contact, error: contactErr } = await supabase
     .from('baker_appusers').select('baker_id')
@@ -87,6 +105,24 @@ router.get('/billing/periods', requireAuth, requireCapability('billing:manage'),
     const { data, error } = await supabase
       .from('billing_periods')
       .select('id, name, display_name, months, discount_pct')
+      .eq('is_active', true)
+      .order('sort_order');
+    if (error) return serverError(req, res, error);
+    res.json(data);
+  } catch (err) {
+    serverError(req, res, err);
+  }
+});
+
+// ── GET /billing/cancellation-reasons ─────────────────────────────────────────
+// Customer-facing churn-survey options (config-driven from the cancellation_reasons master
+// table) for the cancel dialog. Only the selectable, active ones — system reasons never show.
+router.get('/billing/cancellation-reasons', requireAuth, requireCapability('billing:manage'), async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('cancellation_reasons')
+      .select('key, display_name')
+      .eq('is_customer_selectable', true)
       .eq('is_active', true)
       .order('sort_order');
     if (error) return serverError(req, res, error);
@@ -158,9 +194,7 @@ router.post('/billing/subscribe', requireAuth, requireCapability('billing:manage
       const subscription = await razorpayCreateSubscription(razorpayPlanId, totalCount, { baker_id: baker.id, tier, period: periodName });
 
       // Close prior active/pending local rows; park a PENDING row for this attempt.
-      await supabase.from('baker_subscriptions')
-        .update({ status_id: SUBSCRIPTION_STATUS.CANCELLED, end_date: today })
-        .eq('baker_id', baker.id).in('status_id', [SUBSCRIPTION_STATUS.ACTIVE, SUBSCRIPTION_STATUS.PENDING]);
+      await closeSupersededSubscriptions(baker.id, CANCELLATION_REASON.UPGRADE, today);
 
       const { error: parkErr } = await supabase.from('baker_subscriptions').insert({
         baker_id:                baker.id,
@@ -210,9 +244,7 @@ router.post('/billing/subscribe', requireAuth, requireCapability('billing:manage
     const endDate = new Date();
     endDate.setMonth(endDate.getMonth() + periodMonths);
 
-    await supabase.from('baker_subscriptions')
-      .update({ status_id: SUBSCRIPTION_STATUS.CANCELLED, end_date: today })
-      .eq('baker_id', baker.id).in('status_id', [SUBSCRIPTION_STATUS.ACTIVE, SUBSCRIPTION_STATUS.PENDING]);
+    await closeSupersededSubscriptions(baker.id, CANCELLATION_REASON.UPGRADE, today);
 
     await supabase.from('baker_subscriptions').insert({
       baker_id:          baker.id,
@@ -287,6 +319,17 @@ router.post('/billing/cancel', requireAuth, requireCapability('billing:manage'),
       }
     }
 
+    // Optional churn-survey input from the cancel dialog. Validate the picked reason against the
+    // master list (must be customer-selectable + active) so a client can't set a system reason;
+    // fall back to the generic customer_requested when omitted/invalid.
+    const { reason: reasonKey, note } = req.body ?? {};
+    let cancellationReasonId = CANCELLATION_REASON.CUSTOMER_REQUESTED;
+    if (reasonKey) {
+      const { data: r } = await supabase.from('cancellation_reasons')
+        .select('id').eq('key', reasonKey).eq('is_customer_selectable', true).eq('is_active', true).maybeSingle();
+      if (r) cancellationReasonId = r.id;
+    }
+
     // Mark the CURRENT subscription row: keep access as a GRACE period (status stays active)
     // until current_period_end, even though Razorpay is already cancelled. cancellation_requested_at
     // records that the cancel was issued (audit + confirmation). The daily reconcile job relabels
@@ -295,7 +338,12 @@ router.post('/billing/cancel', requireAuth, requireCapability('billing:manage'),
     // "won't renew" and hide the Cancel button. NOTE: we do NOT touch end_date/current_period_end
     // here — the paid-through boundary is preserved.
     const markQuery = supabase.from('baker_subscriptions')
-      .update({ cancel_at_period_end: true, cancellation_requested_at: new Date().toISOString() });
+      .update({
+        cancel_at_period_end:      true,
+        cancellation_requested_at: new Date().toISOString(),
+        cancellation_reason_id:    cancellationReasonId,
+        cancellation_note:         note ?? null,
+      });
     const { error: markErr } = baker.billing_subscription_id
       ? await markQuery.eq('billing_subscription_id', baker.billing_subscription_id)
       : await markQuery.eq('baker_id', baker.id).eq('status_id', SUBSCRIPTION_STATUS.ACTIVE);
@@ -427,7 +475,8 @@ router.post('/billing/webhook', async (req, res) => {
     // — NOT "the baker's most-recent non-cancelled row", which let a late event for a
     // superseded sub mutate the wrong (current) row.
     const { data: subRow, error: subLookupErr } = await supabase
-      .from('baker_subscriptions').select('id, baker_id, plan_id, current_period_end')
+      .from('baker_subscriptions')
+      .select('id, baker_id, plan_id, current_period_end, cancellation_reason_id, cancellation_requested_at')
       .eq('billing_subscription_id', razorpaySubId).maybeSingle();
     if (subLookupErr) throw new Error(`sub lookup failed: ${subLookupErr.message}`);
     if (!subRow) return res.json({ ok: true });
@@ -453,7 +502,9 @@ router.post('/billing/webhook', async (req, res) => {
 
     const newStatusId = STATUS_MAP[event];
     if (newStatusId !== undefined) {
-      const nowMs = Date.now();
+      const now = new Date();
+      const nowMs = now.getTime();
+      const nowIso = now.toISOString();
       const subUpdate = { status_id: newStatusId };
 
       // On a successful (re)charge, stamp the authoritative paid-through boundary from Razorpay
@@ -476,15 +527,25 @@ router.post('/billing/webhook', async (req, res) => {
       // boundary; the daily reconcile job relabels the row to cancelled. Only relabel here if the
       // boundary is already past or unknown.
       if (newStatusId === SUBSCRIPTION_STATUS.CANCELLED) {   // subscription.cancelled / .completed
+        // Attribute the cancellation ONLY when no app-initiated path already did (fill-when-null),
+        // so a cancel from the Razorpay dashboard / support is captured too. subscription.completed
+        // (term reached) is distinct from an external cancel.
+        if (subRow.cancellation_reason_id == null) {
+          subUpdate.cancellation_reason_id = event === 'subscription.completed'
+            ? CANCELLATION_REASON.COMPLETED
+            : CANCELLATION_REASON.ADMIN_EXTERNAL;
+        }
+        if (subRow.cancellation_requested_at == null) subUpdate.cancellation_requested_at = nowIso;
+
         const graceEndMs = subRow.current_period_end ? new Date(subRow.current_period_end).getTime() : null;
         if (graceEndMs && graceEndMs > nowMs) {
           delete subUpdate.status_id;                        // within grace → keep access
           subUpdate.cancel_at_period_end = true;             // reflect "won't renew"
         } else if (!subRow.current_period_end) {
-          subUpdate.end_date = new Date(nowMs).toISOString().slice(0, 10);  // no known boundary → end now (legacy)
+          subUpdate.end_date = nowIso.slice(0, 10);          // no known boundary → end now (legacy)
         }
       } else if (newStatusId === SUBSCRIPTION_STATUS.PAUSED) {
-        subUpdate.end_date = new Date(nowMs).toISOString().slice(0, 10);    // pause flow, unchanged
+        subUpdate.end_date = nowIso.slice(0, 10);            // pause flow, unchanged
       }
 
       // Error-checked: a failed write throws → 500 → Razorpay retries (no silent loss).

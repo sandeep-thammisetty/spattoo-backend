@@ -54,6 +54,8 @@ export async function deriveSubscription(bakerId) {
     current_period_start:      row.current_period_start      ?? null,
     current_period_end:        row.current_period_end        ?? null,
     cancellation_requested_at: row.cancellation_requested_at ?? null,
+    cancellation_reason:       row.cancellation_reason       ?? null,
+    cancellation_note:         row.cancellation_note         ?? null,
   };
 }
 

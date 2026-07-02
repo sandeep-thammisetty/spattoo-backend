@@ -3,6 +3,7 @@ import { serverError } from '../lib/httpError.js';
 import { supabase } from '../services/supabase.js';
 import { requireAuth } from '../middleware/auth.js';
 import { requireCapability } from '../middleware/rbac.js';
+import { assertBakerOwns } from '../lib/tenantScope.js';
 import { config } from '../config.js';
 import { notifyOrderPlaced, notifyDesignUpdated, notifyQuoteIssued, notifyQuoteAccepted, notifyQuoteQuestion, notifyOrderConfirmed, notifyOrderReady, notifyOrderCompleted } from '../services/notifications.js';
 import { getOrderStatuses, getValidStatusKeys, isQuotePhase, idForKey } from '../lib/orderStatuses.js';
@@ -529,13 +530,7 @@ router.post('/customer/orders/:id/message', requireAuth, async (req, res) => {
 
 router.get('/orders', requireAuth, requireCapability('order:view'), async (req, res) => {
   try {
-    const { data: appUser } = await supabase
-      .from('baker_appusers')
-      .select('baker_id')
-      .eq('auth_user_id', req.user.id)
-      .maybeSingle();
-
-    if (!appUser) return res.status(403).json({ error: 'Not a baker account' });
+    if (!req.bakerId) return res.status(403).json({ error: 'Not a baker account' });
 
     const { status, from, to } = req.query;
 
@@ -549,7 +544,7 @@ router.get('/orders', requireAuth, requireCapability('order:view'), async (req, 
         quoted_price, quote_valid_until, current_version_id, quoted_version_id,
         customers ( id, email, first_name, last_name, phone )
       `)
-      .eq('baker_id', appUser.baker_id)
+      .eq('baker_id', req.bakerId)
       .order('created_at', { ascending: false });
 
     if (status)               query = query.eq('status_id', await idForKey(status));
@@ -572,26 +567,13 @@ router.get('/orders', requireAuth, requireCapability('order:view'), async (req, 
 
 router.get('/orders/:id', requireAuth, requireCapability('order:view'), async (req, res) => {
   try {
-    const { data: appUser } = await supabase
-      .from('baker_appusers')
-      .select('baker_id')
-      .eq('auth_user_id', req.user.id)
-      .maybeSingle();
+    if (!req.bakerId) return res.status(403).json({ error: 'Not a baker account' });
 
-    if (!appUser) return res.status(403).json({ error: 'Not a baker account' });
-
-    const { data: order, error } = await supabase
-      .from('orders')
-      .select(`
+    const order = await assertBakerOwns(req, 'orders', req.params.id, { select: `
         *,
         order_statuses ( key ),
         customers ( id, email, first_name, last_name, phone )
-      `)
-      .eq('id', req.params.id)
-      .eq('baker_id', appUser.baker_id)
-      .maybeSingle();
-
-    if (error)  return serverError(req, res, error);
+      ` });
     if (!order) return res.status(404).json({ error: 'Order not found' });
 
     res.json({ ...withStatusKey(order), quote_stale: quoteStale(order) });
@@ -629,8 +611,7 @@ router.patch('/orders/:id/status', requireAuth, requireCapability('order:manage'
       .eq('auth_user_id', req.user.id).maybeSingle();
     if (!appUser) return res.status(403).json({ error: 'Not a baker account' });
 
-    const { data: existingRow } = await supabase
-      .from('orders').select('status_id, current_version_id, order_statuses ( key )').eq('id', req.params.id).eq('baker_id', appUser.baker_id).maybeSingle();
+    const existingRow = await assertBakerOwns(req, 'orders', req.params.id, { select: 'status_id, current_version_id, order_statuses ( key )' });
     if (!existingRow) return res.status(404).json({ error: 'Order not found' });
     const existing = withStatusKey(existingRow);
 
@@ -713,15 +694,15 @@ router.patch('/orders/:id/status', requireAuth, requireCapability('order:manage'
 // order_finished_photos; served back as public URLs. Baker-scoped: every route
 // verifies the order belongs to the caller's bakery.
 
-// Resolve the caller's baker_appuser + assert the order is theirs. Returns
-// { appUser } or { status, error } for the route to return.
-async function loadBakerOrder(authUserId, orderId) {
+// Resolve the caller's baker_appuser (for appUser.id, used to stamp uploads) + assert the order is
+// theirs (SEC-14 assertBakerOwns — server-resolved req.bakerId). Returns { appUser } or
+// { status, error } for the route to return.
+async function loadBakerOrder(req, orderId) {
   const { data: appUser } = await supabase
     .from('baker_appusers').select('baker_id, id')
-    .eq('auth_user_id', authUserId).maybeSingle();
+    .eq('auth_user_id', req.user.id).maybeSingle();
   if (!appUser) return { status: 403, error: 'Not a baker account' };
-  const { data: order } = await supabase
-    .from('orders').select('id').eq('id', orderId).eq('baker_id', appUser.baker_id).maybeSingle();
+  const order = await assertBakerOwns(req, 'orders', orderId);
   if (!order) return { status: 404, error: 'Order not found' };
   return { appUser };
 }
@@ -729,7 +710,7 @@ async function loadBakerOrder(authUserId, orderId) {
 // GET — list this order's finished photos (ordered), as public URLs for display.
 router.get('/orders/:id/photos', requireAuth, requireCapability('order:manage'), async (req, res) => {
   try {
-    const ctx = await loadBakerOrder(req.user.id, req.params.id);
+    const ctx = await loadBakerOrder(req, req.params.id);
     if (ctx.error) return res.status(ctx.status).json({ error: ctx.error });
     const { data: rows, error } = await supabase
       .from('order_finished_photos').select('id, key, sort_order')
@@ -747,7 +728,7 @@ router.get('/orders/:id/photos', requireAuth, requireCapability('order:manage'),
 // live under orders/photos/ (the upload allow-list folder).
 router.post('/orders/:id/photos', requireAuth, requireCapability('order:manage'), async (req, res) => {
   try {
-    const ctx = await loadBakerOrder(req.user.id, req.params.id);
+    const ctx = await loadBakerOrder(req, req.params.id);
     if (ctx.error) return res.status(ctx.status).json({ error: ctx.error });
 
     const keys = Array.isArray(req.body?.keys) ? req.body.keys.map(k => String(k).replace(/^\/+/, '')) : null;
@@ -782,7 +763,7 @@ router.post('/orders/:id/photos', requireAuth, requireCapability('order:manage')
 // DELETE — remove one finished photo (row + its R2 object).
 router.delete('/orders/:id/photos/:photoId', requireAuth, requireCapability('order:manage'), async (req, res) => {
   try {
-    const ctx = await loadBakerOrder(req.user.id, req.params.id);
+    const ctx = await loadBakerOrder(req, req.params.id);
     if (ctx.error) return res.status(ctx.status).json({ error: ctx.error });
     const { data: row } = await supabase
       .from('order_finished_photos').select('id, key')
@@ -818,10 +799,7 @@ router.post('/orders/:id/quote', requireAuth, requireCapability('order:manage'),
       .eq('auth_user_id', req.user.id).maybeSingle();
     if (!appUser) return res.status(403).json({ error: 'Not a baker account' });
 
-    const { data: existingRow } = await supabase
-      .from('orders')
-      .select('status_id, current_version_id, order_statuses ( key ), bakers(name, slug), customers(email, first_name)')
-      .eq('id', req.params.id).eq('baker_id', appUser.baker_id).maybeSingle();
+    const existingRow = await assertBakerOwns(req, 'orders', req.params.id, { select: 'status_id, current_version_id, order_statuses ( key ), bakers(name, slug), customers(email, first_name)' });
     if (!existingRow) return res.status(404).json({ error: 'Order not found' });
     const existing = withStatusKey(existingRow);
 
@@ -891,9 +869,7 @@ router.patch('/orders/:id', requireAuth, requireCapability('order:manage'), asyn
       .eq('auth_user_id', req.user.id).maybeSingle();
     if (!appUser) return res.status(403).json({ error: 'Not a baker account' });
 
-    const { data: existingRow } = await supabase
-      .from('orders').select(['status_id', 'order_statuses ( key )', ...EDITABLE_FIELDS].join(', '))
-      .eq('id', req.params.id).eq('baker_id', appUser.baker_id).maybeSingle();
+    const existingRow = await assertBakerOwns(req, 'orders', req.params.id, { select: ['status_id', 'order_statuses ( key )', ...EDITABLE_FIELDS].join(', ') });
     if (!existingRow) return res.status(404).json({ error: 'Order not found' });
     const existing = withStatusKey(existingRow);
 
@@ -973,10 +949,7 @@ router.patch('/orders/:id/design', requireAuth, requireCapability('order:manage'
     if (!appUser) return res.status(403).json({ error: 'Not a baker account' });
 
     // Pull status + baker/customer contact (for the lock guard + customer email).
-    const { data: existingRow } = await supabase
-      .from('orders')
-      .select('id, status_id, order_statuses ( key ), bakers(name, slug), customers(email, first_name, last_name)')
-      .eq('id', req.params.id).eq('baker_id', appUser.baker_id).maybeSingle();
+    const existingRow = await assertBakerOwns(req, 'orders', req.params.id, { select: 'id, status_id, order_statuses ( key ), bakers(name, slug), customers(email, first_name, last_name)' });
     if (!existingRow) return res.status(404).json({ error: 'Order not found' });
     const existing = withStatusKey(existingRow);
 
@@ -1018,12 +991,8 @@ router.patch('/orders/:id/design', requireAuth, requireCapability('order:manage'
 // The design's append-only version history (newest first).
 router.get('/orders/:id/versions', requireAuth, requireCapability('order:view'), async (req, res) => {
   try {
-    const { data: appUser } = await supabase
-      .from('baker_appusers').select('baker_id').eq('auth_user_id', req.user.id).maybeSingle();
-    if (!appUser) return res.status(403).json({ error: 'Not a baker account' });
-
-    const { data: order } = await supabase
-      .from('orders').select('id').eq('id', req.params.id).eq('baker_id', appUser.baker_id).maybeSingle();
+    if (!req.bakerId) return res.status(403).json({ error: 'Not a baker account' });
+    const order = await assertBakerOwns(req, 'orders', req.params.id);
     if (!order) return res.status(404).json({ error: 'Order not found' });
 
     const { data, error } = await supabase
@@ -1043,13 +1012,8 @@ router.get('/orders/:id/versions', requireAuth, requireCapability('order:view'),
 
 router.get('/orders/:id/audit', requireAuth, requireCapability('order:view'), async (req, res) => {
   try {
-    const { data: appUser } = await supabase
-      .from('baker_appusers').select('baker_id')
-      .eq('auth_user_id', req.user.id).maybeSingle();
-    if (!appUser) return res.status(403).json({ error: 'Not a baker account' });
-
-    const { data: order } = await supabase
-      .from('orders').select('id').eq('id', req.params.id).eq('baker_id', appUser.baker_id).maybeSingle();
+    if (!req.bakerId) return res.status(403).json({ error: 'Not a baker account' });
+    const order = await assertBakerOwns(req, 'orders', req.params.id);
     if (!order) return res.status(404).json({ error: 'Order not found' });
 
     const { data, error } = await supabase

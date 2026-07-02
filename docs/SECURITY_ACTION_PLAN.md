@@ -239,9 +239,22 @@ forget — see SEC-1, SEC-11). The RBAC model is sound: a separate `admins` tabl
   needed: grep across admin/core/web found **no** caller of `/jobs/extract` (the endpoint had no live
   client). `EXEMPT` in `check-admin-routes.mjs` is now empty (mechanism kept as the explicit escape-hatch);
   `npm run check:admin-routes` green with zero exemptions.
-- [ ] **SEC-14 — Shared `assertBakerOwns(table, id)` helper.** The "look up `baker_id` from the token,
-  then `.eq('baker_id', …)`" pattern is duplicated ~30×; that duplication is where SEC-2/SEC-7 slipped in.
-  One shared helper both reduces risk and matches the project-wide DRY/reuse invariant (root `CLAUDE.md`).
+- [x] **SEC-14 — Shared `assertBakerOwns(req, table, id)` helper. ✅ DONE.** The "read a row by id, then
+  filter by `baker_id`" ownership check was hand-written ~a dozen times; its OMISSION on by-id routes is
+  exactly what caused SEC-2/SEC-7 (the list route carried the filter, the sibling by-id route forgot it).
+  **Fix:** new `src/lib/tenantScope.js → assertBakerOwns(req, table, id, { select })` (beside
+  `scopeCatalogRead`) — reads the row `WHERE id = :id AND baker_id = :req.bakerId` and returns it or null
+  (caller → 404). Uses the **server-resolved** `req.bakerId` (never a client value); **no admin bypass**
+  (these are per-tenant rows — a null bakerId can never match, so admins/non-bakers get null → 404, and a
+  wrong-tenant miss is indistinguishable from a nonexistent id → no enumeration). Migrated every
+  **by-id read-check** to it: `orders.js` (`GET /orders/:id`, `loadBakerOrder`, status/quote/patch/design
+  read-checks, versions/audit) + `bakers.js` (`DELETE /baker/storefront-photos/:id`, whose delete is now
+  also `baker_id`-scoped as defense-in-depth). Also collapsed the redundant baker-id **re-resolvers** onto
+  `req.bakerId` (deleted `customers.js getBakerId`; dropped baker-only `appUser`/`contact` lookups in the
+  order GETs) — one canonical source, fewer DB round-trips. **Left intentionally as-is:** atomic
+  `update/delete … .eq('id').eq('baker_id')` mutations (splitting them would add a TOCTOU race — the
+  scoped write IS the guard) and collection-list scoping (`assertBakerOwns(id)` doesn't model it). Net
+  −18 lines; `npm run check` green; all 403/404 semantics preserved.
 - [ ] **SEC-17 — Edge / DDoS protection (infra layer). 🗓️ FUTURE — not addressed now.** SEC-4's app-level
   rate limiting is a per-actor **abuse/cost/fraud** control, NOT DDoS defense: the limiter runs *inside*
   Node (after TCP/TLS + parse + a Redis round-trip, then returns 429), so a flood still burns compute /

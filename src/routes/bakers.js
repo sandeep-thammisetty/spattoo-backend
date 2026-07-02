@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { serverError } from '../lib/httpError.js';
+import { assertBakerOwns } from '../lib/tenantScope.js';
 import { randomBytes } from 'crypto';
 import { supabase } from '../services/supabase.js';
 import { deleteObject } from '../services/r2.js';
@@ -523,16 +524,12 @@ router.post('/baker/storefront-image', requireAuth, requireCapability('store:man
 // Remove a photo: deletes the row AND its R2 object (no orphans left behind).
 router.delete('/baker/storefront-photos/:id', requireAuth, requireCapability('store:manage'), async (req, res) => {
   try {
-    const { data: contact } = await supabase
-      .from('baker_appusers').select('baker_id').eq('auth_user_id', req.user.id).maybeSingle();
-    if (!contact) return res.status(404).json({ error: 'No baker account found' });
+    if (!req.bakerId) return res.status(404).json({ error: 'No baker account found' });
 
-    const { data: row } = await supabase
-      .from('baker_storefront_photos').select('id, storage_key')
-      .eq('id', req.params.id).eq('baker_id', contact.baker_id).maybeSingle();
+    const row = await assertBakerOwns(req, 'baker_storefront_photos', req.params.id, { select: 'id, storage_key' });
     if (!row) return res.status(404).json({ error: 'Photo not found' });
 
-    const { error } = await supabase.from('baker_storefront_photos').delete().eq('id', row.id);
+    const { error } = await supabase.from('baker_storefront_photos').delete().eq('id', row.id).eq('baker_id', req.bakerId);
     if (error) return serverError(req, res, error);
     try { await deleteObject(row.storage_key); } catch (e) { /* best-effort R2 cleanup */ }
 

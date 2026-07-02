@@ -8,13 +8,8 @@ import { config } from '../config.js';
 
 const router = Router();
 
-// ── Resolve baker_id from auth user ──────────────────────────────────────────
-async function getBakerId(userId) {
-  const { data } = await supabase
-    .from('baker_appusers').select('baker_id')
-    .eq('auth_user_id', userId).maybeSingle();
-  return data?.baker_id ?? null;
-}
+// baker_id is the SERVER-RESOLVED req.bakerId (middleware/rbac.js → ensurePrincipal, populated by
+// requireCapability on every route here) — no local re-lookup needed (SEC-14: one canonical source).
 
 // ── GET /api/baker/customers ──────────────────────────────────────────────────
 // ?include_inactive=true  → include deactivated customers
@@ -22,7 +17,7 @@ async function getBakerId(userId) {
 
 router.get('/baker/customers', requireAuth, requireCapability('customer:manage'), async (req, res) => {
   try {
-    const bakerId = await getBakerId(req.user.id);
+    const bakerId = req.bakerId;
     if (!bakerId) return res.status(403).json({ error: 'Not a baker account' });
 
     const includeInactive = req.query.include_inactive === 'true';
@@ -59,7 +54,7 @@ router.get('/baker/customers', requireAuth, requireCapability('customer:manage')
 
 router.post('/baker/customers', requireAuth, requireCapability('customer:manage'), async (req, res) => {
   try {
-    const bakerId = await getBakerId(req.user.id);
+    const bakerId = req.bakerId;
     if (!bakerId) return res.status(403).json({ error: 'Not a baker account' });
 
     const { firstName, lastName, email, phone } = req.body;
@@ -92,7 +87,7 @@ router.post('/baker/customers', requireAuth, requireCapability('customer:manage'
 
 router.patch('/baker/customers/:id', requireAuth, requireCapability('customer:manage'), async (req, res) => {
   try {
-    const bakerId = await getBakerId(req.user.id);
+    const bakerId = req.bakerId;
     if (!bakerId) return res.status(403).json({ error: 'Not a baker account' });
 
     const { firstName, lastName, email, phone } = req.body;
@@ -124,7 +119,7 @@ router.patch('/baker/customers/:id', requireAuth, requireCapability('customer:ma
 
 router.patch('/baker/customers/:id/deactivate', requireAuth, requireCapability('customer:manage'), async (req, res) => {
   try {
-    const bakerId = await getBakerId(req.user.id);
+    const bakerId = req.bakerId;
     if (!bakerId) return res.status(403).json({ error: 'Not a baker account' });
 
     const { data, error } = await supabase
@@ -144,7 +139,7 @@ router.patch('/baker/customers/:id/deactivate', requireAuth, requireCapability('
 
 router.patch('/baker/customers/:id/reactivate', requireAuth, requireCapability('customer:manage'), async (req, res) => {
   try {
-    const bakerId = await getBakerId(req.user.id);
+    const bakerId = req.bakerId;
     if (!bakerId) return res.status(403).json({ error: 'Not a baker account' });
 
     const { data, error } = await supabase

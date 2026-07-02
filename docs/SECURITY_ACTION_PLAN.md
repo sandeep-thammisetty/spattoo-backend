@@ -217,17 +217,23 @@ forget — see SEC-1, SEC-11). The RBAC model is sound: a separate `admins` tabl
   wrong and FK-invalid. `/jobs/extract` is `catalog:admin` (internal admins, no owning baker) and the
   `extractImage` processor never reads `baker_id`. **Fix:** insert `baker_id: null` — a global/baker-less
   catalog job, matching the `baker_id IS NULL = global` convention (SEC-7).
-- [ ] **SEC-16 — Front-end URL-scheme sink (`href` without allowlist).** _(spattoo-core / spattoo-web,
-  not the API — logged here to keep one security ledger.)_ The React apps auto-escape all HTML bodies
-  (JSX; **no** `dangerouslySetInnerHTML`/`innerHTML` anywhere), so the SEC-3 stored-XSS class does **not**
-  exist outside email. The one residual gap is URL **schemes**: `spattoo-core/src/storefront/
-  CustomerStorefront.jsx:475` binds a baker-controlled `baker.website_url` to `href` with no scheme
-  check (React escapes the string but does not block `javascript:`), and the config-driven nav
-  `n.href` (`:243`, `:265`) is the same pattern if those hrefs are baker/admin-authored. Low severity
-  (baker-controlled → mostly self-XSS on the baker's own public storefront). Safe hardcoded-scheme
-  links (`tel:`/`wa.me/`/`instagram.com/`) are fine. **Fix:** a shared `safeHref(url)` helper
-  (https-only allowlist — the front-end analog of email's `escUrl`) at every stored-URL `href`, **and**
-  validate the scheme when the baker saves `website_url` (defense at the write-point too).
+- [x] **SEC-16 — Front-end URL-scheme sink (`href` without allowlist). ✅ DONE.** _(spattoo-core +
+  spattoo-api — logged here to keep one security ledger.)_ The React apps auto-escape all HTML bodies
+  (JSX; **no** `dangerouslySetInnerHTML`/`innerHTML` anywhere), so the SEC-3 stored-XSS class doesn't
+  exist outside email; the residual gap was URL **schemes** (React escapes the string but does not block
+  `javascript:`/`data:`). **Audit narrowed the sinks:** the only free-form baker-controlled URL rendered
+  into an `href` is `baker.website_url` (`CustomerStorefront.jsx:476`, which `ThemePreview` reuses). The
+  config-driven nav `n.href` turned out to be **hardcoded in-page anchors** (`#gallery`/`#story`/
+  `#contact` — `CustomerStorefront.jsx:186`), NOT baker/admin-authored → no sink, left as-is. `tel:` and
+  `https://instagram.com/<handle>` are hardcoded-scheme/host → safe. Images (`logo_url`/`portrait_url`)
+  are server-generated R2 keys (SEC-5), not arbitrary. **Fix (two layers):**
+  - **Render guard (core):** `storefrontKit.js → safeHref(url)` (absolute http(s) only, else null) —
+    computed once as `websiteHref` and used at the footer link; a `javascript:`/`data:`/relative URL now
+    renders **no link** instead of an executable href.
+  - **Write-point (api):** shared `src/lib/safeUrl.js → normalizeWebUrl(url)` (mirror of `safeHref`),
+    applied where `website_url` is persisted — `services/bakerProvisioning.js` (admin onboard + self-signup,
+    one shared create path) and `PATCH /baker/profile` (`routes/bakers.js`) — so a dangerous scheme can't
+    even be stored. Core build + 78 tests green; api `npm run check` green.
 
 ---
 

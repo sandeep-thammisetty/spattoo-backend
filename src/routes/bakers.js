@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { serverError } from '../lib/httpError.js';
 import { assertBakerOwns } from '../lib/tenantScope.js';
+import { normalizeWebUrl } from '../lib/safeUrl.js';
 import { randomBytes } from 'crypto';
 import { supabase } from '../services/supabase.js';
 import { deleteObject } from '../services/r2.js';
@@ -401,6 +402,9 @@ router.patch('/baker/profile', requireAuth, requireCapability('store:manage'), a
     for (const f of ALLOWED) {
       if (f in req.body) updates[f] = req.body[f] || null;
     }
+    // SEC-16 — a stored URL rendered into an href must be http(s); reject javascript:/data:/etc at
+    // the write-point (defense-in-depth behind the front-end safeHref guard).
+    if ('website_url' in updates) updates.website_url = normalizeWebUrl(updates.website_url);
     // storefront_theme_id is a FK to the themes master table — validate it exists and
     // is available (is_active); never coerce the NOT-NULL column to null.
     if ('storefront_theme_id' in req.body) {

@@ -1,4 +1,5 @@
 import { supabase } from './supabase.js';
+import { normalizeWebUrl } from '../lib/safeUrl.js';
 import { logSubscriptionEvent } from '../routes/subscriptions.js';
 import { enqueueLogoBgRemoval } from '../jobs/processors/removeLogoBg.js';
 import { getSparkTrialDays }    from './entitlements.js';
@@ -141,7 +142,7 @@ export async function createBakerForUser({
       email:            email            || null,
       tagline:          tagline          || null,
       instagram_handle: instagram_handle || null,
-      website_url:      website_url      || null,
+      website_url:      normalizeWebUrl(website_url),   // SEC-16 — http(s) only, else null
       primary_color:    primary_color    || null,
       accent_color:     accent_color     || null,
       logo_url:         logo_url         || null,

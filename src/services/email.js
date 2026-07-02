@@ -1,34 +1,16 @@
-import nodemailer from 'nodemailer';
-import { config } from '../config.js';
-
-const transporter = nodemailer.createTransport({
-  host:   config.smtp.host,
-  port:   config.smtp.port,
-  secure: config.smtp.port === 465,
-  auth: {
-    user: config.smtp.user,
-    pass: config.smtp.pass,
-  },
-});
-
-// SEC-3: escape user/tenant-controlled values before interpolating into email HTML, so a
-// name/note can't inject markup (phishing links, tracking pixels, layout hijack) into the
-// recipient's inbox. Mirrors esc() in jobs/processors/sendNotification.js.
-function esc(s) {
-  return String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-}
+import { sendEmail, mailConfigured } from './mailer.js';
+import { esc } from '../lib/htmlEscape.js';
 
 // Warm welcome sent by US (not Supabase) once an invited staff member has confirmed +
 // set their password — see the first-load trigger in GET /api/baker/profile. Best-effort
 // (the send is fire-and-forget; the DB flag is already claimed before we get here).
 export async function sendStaffWelcomeEmail({ staff, baker }) {
-  if (!config.smtp.host || !config.smtp.user) return;
+  if (!mailConfigured()) return;
   if (!staff?.email) return;
 
   const name = esc(staff.first_name || 'there');
   const bakery = esc(baker?.name || 'your bakery');
-  await transporter.sendMail({
-    from:    config.smtp.from,
+  await sendEmail({
     to:      staff.email,
     subject: `Welcome to ${baker?.name || 'your bakery'} on Spattoo 🎂`,
     html: `

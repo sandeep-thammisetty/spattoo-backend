@@ -73,6 +73,9 @@ export const config = {
   //   dev:  http://{slug}.localhost:5173
   //   prod: https://{slug}.spattoo.com
   storefront: { urlTemplate: process.env.STOREFRONT_URL_TEMPLATE || 'https://{slug}.spattoo.com' },
+  // Baker-facing app base URL, for deep links in lifecycle emails (billing/settings). Optional —
+  // the email CTA is omitted when unset, so no broken links. e.g. https://app.spattoo.com
+  app: { url: process.env.APP_URL || '' },
   // SEC-8 — CORS allowlist. `baseDomain` is derived from the storefront template so ALL storefront
   // subdomains ({slug}.<base>) + app/marketing match ONE wildcard rule (O(1) in tenants, never a
   // per-baker list). Override with CORS_BASE_DOMAIN if the API host differs. `allowLocalhost` keeps

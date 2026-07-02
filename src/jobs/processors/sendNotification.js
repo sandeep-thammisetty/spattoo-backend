@@ -1,32 +1,27 @@
-import nodemailer from 'nodemailer';
 import { config } from '../../config.js';
 import { supabase } from '../../services/supabase.js';
-
-const transporter = nodemailer.createTransport({
-  host:   config.smtp.host,
-  port:   config.smtp.port,
-  secure: config.smtp.port === 465,
-  auth: { user: config.smtp.user, pass: config.smtp.pass },
-});
+import { sendEmail } from '../../services/mailer.js';
+import { esc, escUrl } from '../../lib/htmlEscape.js';
 
 function formatDate(str) {
   if (!str) return '—';
   return new Date(str).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' });
 }
 
-function esc(s) {
-  return String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+// Format an INSTANT (ISO timestamptz) as a calendar date in the recipient's timezone — NOT the
+// server's UTC — so "renews on Aug 2" doesn't display as Aug 1 for an IST baker (the datetime
+// convention: convert at the edge using the actor's zone). Falls back to Asia/Kolkata.
+function formatDateTz(iso, tz) {
+  if (!iso) return '—';
+  try {
+    return new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric', timeZone: tz || 'Asia/Kolkata' });
+  } catch {
+    return new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' });
+  }
 }
 
-// URL-safe escaping for href/src attributes (SEC-3). Escapes AND allowlists the scheme:
-// only absolute http(s) URLs pass (our storefront links + R2 public assets are all https),
-// so an injected `javascript:`/`data:` value can never reach an attribute. Anything else
-// yields '' → the attribute renders empty instead of executing.
-function escUrl(raw) {
-  const s = String(raw ?? '').trim();
-  if (!/^https?:\/\//i.test(s)) return '';
-  return esc(s);
-}
+const titleCase = s => (s ? String(s).charAt(0).toUpperCase() + String(s).slice(1) : '');
+const rupees    = paise => `₹${(Number(paise || 0) / 100).toLocaleString('en-IN')}`;
 
 // Branded, email-client-safe (table layout, inline styles) invite email. Returns
 // { subject, text, html }. Kept here (with the other notification templates) so the
@@ -308,6 +303,56 @@ function buildEmail(typeSlug, recipientEmail, payload) {
     };
   }
 
+  // ── Subscription lifecycle (baker-facing, Spattoo-branded) ──────────────────
+  // from = Spattoo (config.smtp.from) — these are platform→baker, not baker-branded.
+  const plan       = titleCase(p.planName) || 'your';
+  const billingUrl = config.app.url ? `${config.app.url.replace(/\/+$/, '')}/settings/billing` : null;
+  const billingCta = billingUrl
+    ? `<p style="margin-top:20px"><a href="${escUrl(billingUrl)}" style="display:inline-block;background:#2C4433;color:#fff;text-decoration:none;padding:12px 28px;border-radius:10px;font-weight:700">Manage your plan</a></p>`
+    : '';
+  const footer = `<p style="color:#888;font-size:12px;margin-top:24px">Spattoo — the 3D cake designer for bakeries</p>`;
+  const shell  = inner => `<div style="font-family:sans-serif;max-width:560px;margin:0 auto;color:#333">${inner}${footer}</div>`;
+  const hi     = p.bakerName ? `, ${esc(p.bakerName)}` : '';
+
+  if (typeSlug === 'subscription_activated') {
+    const renews = formatDateTz(p.nextBillingAt, p.timeZone);
+    return { from: config.smtp.from, to: recipientEmail, subject: `Your ${plan} plan is active`,
+      html: shell(`<h2 style="color:#2C4433">You're all set${hi}</h2>
+        <p>Your <b>${esc(plan)}</b> plan is now active${renews !== '—' ? ` and renews on <b>${renews}</b>` : ''}. Your storefront and 3D cake designer are ready to go.</p>
+        ${billingCta}`) };
+  }
+
+  if (typeSlug === 'subscription_renewed') {
+    const renews = formatDateTz(p.nextBillingAt, p.timeZone);
+    return { from: config.smtp.from, to: recipientEmail, subject: `Payment received — ${plan} plan renewed`,
+      html: shell(`<h2 style="color:#2C4433">Thanks${hi}</h2>
+        <p>We've received your payment${p.amount != null ? ` of <b>${rupees(p.amount)}</b>` : ''} and renewed your <b>${esc(plan)}</b> plan${renews !== '—' ? `. Your next renewal is <b>${renews}</b>` : ''}.</p>
+        ${billingCta}`) };
+  }
+
+  if (typeSlug === 'payment_failed') {
+    const updateUrl = escUrl(p.shortUrl);
+    return { from: config.smtp.from, to: recipientEmail, subject: `Action needed: payment issue on your ${plan} plan`,
+      html: shell(`<h2 style="color:#2C4433">We couldn't process your payment</h2>
+        <p>Your latest payment for the <b>${esc(plan)}</b> plan didn't go through. To keep your storefront and designer running without interruption, please update your payment method.</p>
+        ${updateUrl ? `<p style="margin-top:20px"><a href="${updateUrl}" style="display:inline-block;background:#2C4433;color:#fff;text-decoration:none;padding:12px 28px;border-radius:10px;font-weight:700">Update payment method</a></p>` : billingCta}`) };
+  }
+
+  if (typeSlug === 'subscription_cancelled') {
+    const until = formatDateTz(p.accessUntil, p.timeZone);
+    return { from: config.smtp.from, to: recipientEmail, subject: `Your ${plan} subscription is cancelled`,
+      html: shell(`<h2 style="color:#2C4433">Your subscription is cancelled</h2>
+        <p>Your <b>${esc(plan)}</b> subscription has been cancelled${until !== '—' ? ` — you'll keep full access until <b>${until}</b>` : ''}. Changed your mind? You can resubscribe anytime${until !== '—' ? ' before then' : ''}.</p>
+        ${billingCta}`) };
+  }
+
+  if (typeSlug === 'subscription_expired') {
+    return { from: config.smtp.from, to: recipientEmail, subject: `Your Spattoo subscription has ended`,
+      html: shell(`<h2 style="color:#2C4433">Your subscription has ended</h2>
+        <p>Your <b>${esc(plan)}</b> subscription has ended and access is now paused. Resubscribe to pick up right where you left off — your designs and storefront are saved.</p>
+        ${billingCta}`) };
+  }
+
   throw new Error(`Unknown notification type: ${typeSlug}`);
 }
 
@@ -325,19 +370,19 @@ export async function sendNotification({ notificationId }) {
   const mail = buildEmail(typeSlug, notification.recipient_email, notification.payload);
 
   try {
-    const info = await transporter.sendMail(mail);
-    // 'sent' only means the SMTP server ACCEPTED the message — not that it reached the
-    // inbox. Log what the provider actually said (response line + message id + any
-    // rejected recipients) so deliverability problems (sandbox, SPF/DKIM, bounces)
-    // are diagnosable from Render logs instead of being invisible behind status=sent.
+    const result = await sendEmail(mail);
+    // 'sent' only means the provider ACCEPTED the message — not that it reached the inbox. Log
+    // what the provider actually said (normalized id + response + any rejected recipients) so
+    // deliverability problems (sandbox, SPF/DKIM, bounces) are diagnosable from Render logs
+    // instead of being invisible behind status=sent.
     console.log('[notifications] sent', JSON.stringify({
       notificationId,
       type:      typeSlug,
       to:        mail.to,
-      messageId: info?.messageId,
-      response:  info?.response,
-      accepted:  info?.accepted,
-      rejected:  info?.rejected,
+      messageId: result.id,
+      response:  result.response,
+      accepted:  result.accepted,
+      rejected:  result.rejected,
     }));
     await supabase.from('notifications').update({
       status:  'sent',

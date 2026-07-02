@@ -195,3 +195,25 @@ export async function notifyOrderCompleted({ order, baker, customer }) {
     thumbnailUrl:      order.design_thumbnail_url ?? null,
   });
 }
+
+// ── Subscription lifecycle (baker-facing) ────────────────────────────────────
+// Notify the BAKER about their OWN Spattoo subscription. Fired from the billing webhook
+// (routes/billing.js) on Razorpay events, gated to the baker's CURRENT subscription. Recipient
+// uses the same bakers.email → primary-owner fallback as the order emails. `timeZone` rides along
+// so the template formats dates in the baker's zone (not UTC). One internal helper; thin per-event
+// exports (DRY). `baker` = { id, name, email, timezone }.
+async function notifySubscription(typeSlug, baker, payload) {
+  const email = await bakerNotifyEmail(baker);
+  if (!email) return;
+  await insertNotification(typeSlug, email, {
+    bakerName: baker?.name ?? null,
+    timeZone:  baker?.timezone ?? null,
+    ...payload,
+  });
+}
+
+export const notifySubscriptionActivated = (baker, p) => notifySubscription('subscription_activated', baker, p);
+export const notifySubscriptionRenewed   = (baker, p) => notifySubscription('subscription_renewed',   baker, p);
+export const notifyPaymentFailed         = (baker, p) => notifySubscription('payment_failed',          baker, p);
+export const notifySubscriptionCancelled = (baker, p) => notifySubscription('subscription_cancelled',  baker, p);
+export const notifySubscriptionExpired   = (baker, p) => notifySubscription('subscription_expired',    baker, p);

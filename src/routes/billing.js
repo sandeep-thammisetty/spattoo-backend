@@ -7,6 +7,10 @@ import { requireAuth } from '../middleware/auth.js';
 import { requireCapability } from '../middleware/rbac.js';
 import { config } from '../config.js';
 import { logSubscriptionEvent, deriveSubscription } from './subscriptions.js';
+import {
+  notifySubscriptionActivated, notifySubscriptionRenewed, notifyPaymentFailed,
+  notifySubscriptionCancelled, notifySubscriptionExpired,
+} from '../services/notifications.js';
 import { getSparkTrialDays } from '../services/entitlements.js';
 import { SUBSCRIPTION_STATUS } from '../constants/subscriptionStatuses.js';
 import { PAYMENT_STATUS }      from '../constants/paymentStatuses.js';
@@ -485,7 +489,7 @@ router.post('/billing/webhook', async (req, res) => {
     // Only mirror status onto bakers when this IS the baker's current subscription, so a
     // stale event for an old sub can't clobber the live status.
     const { data: bakerRow } = await supabase
-      .from('bakers').select('billing_subscription_id').eq('id', bakerId).maybeSingle();
+      .from('bakers').select('id, name, email, timezone, billing_subscription_id').eq('id', bakerId).maybeSingle();
     const isCurrent = bakerRow?.billing_subscription_id === razorpaySubId;
 
     const STATUS_MAP = {
@@ -595,6 +599,32 @@ router.post('/billing/webhook', async (req, res) => {
           : new Date().toISOString(),
       }, { onConflict: 'razorpay_payment_id', ignoreDuplicates: true });
       if (payErr) throw new Error(`payments upsert failed: ${payErr.message}`);
+    }
+
+    // ── Lifecycle emails (baker-facing) ───────────────────────────────────────
+    // Fire ONLY for the baker's CURRENT subscription — a stale event, or the cancel of a sub that
+    // was just superseded by an upgrade, must not email. Each event maps to at most one email
+    // (charged only when it's a real renewal, not the first activation charge). Best-effort: a send
+    // hiccup must NOT throw — that would 500 the webhook, make Razorpay retry the whole thing, and
+    // risk double-processing — so wrap and swallow.
+    if (isCurrent && bakerRow) {
+      const planName      = PLAN.NAME_BY_ID[subRow.plan_id] ?? null;
+      const nextBillingAt = sub?.current_end ? new Date(sub.current_end * 1000).toISOString() : null;
+      try {
+        if (event === 'subscription.activated') {
+          await notifySubscriptionActivated(bakerRow, { planName, nextBillingAt });
+        } else if (event === 'subscription.charged' && (sub?.paid_count ?? 0) > 1) {
+          await notifySubscriptionRenewed(bakerRow, { planName, nextBillingAt, amount: payment?.amount ?? null });
+        } else if (event === 'subscription.pending') {
+          await notifyPaymentFailed(bakerRow, { planName, shortUrl: sub?.short_url ?? null });
+        } else if (event === 'subscription.cancelled') {
+          await notifySubscriptionCancelled(bakerRow, { planName, accessUntil: subRow.current_period_end ?? nextBillingAt });
+        } else if (event === 'subscription.halted' || event === 'subscription.completed') {
+          await notifySubscriptionExpired(bakerRow, { planName });
+        }
+      } catch (err) {
+        console.error('[billing] lifecycle email dispatch failed:', err.message);
+      }
     }
 
     res.json({ ok: true });

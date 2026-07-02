@@ -255,6 +255,11 @@ forget — see SEC-1, SEC-11). The RBAC model is sound: a separate `admins` tabl
   `update/delete … .eq('id').eq('baker_id')` mutations (splitting them would add a TOCTOU race — the
   scoped write IS the guard) and collection-list scoping (`assertBakerOwns(id)` doesn't model it). Net
   −18 lines; `npm run check` green; all 403/404 semantics preserved.
+  **Reviewer note (so this isn't re-flagged):** where a route has BOTH an `assertBakerOwns` pre-check and
+  a `.eq('baker_id', req.bakerId)` on its mutation, the pairing is DELIBERATE defense-in-depth — the assert
+  is the readable pre-check, the scoped write is the atomic guard (closes the check→write TOCTOU window).
+  Do NOT "de-dupe" the mutation's `.eq('baker_id')`. Convention documented in `src/lib/tenantScope.js` +
+  an inline comment at the `baker_storefront_photos` delete site.
 - [ ] **SEC-17 — Edge / DDoS protection (infra layer). 🗓️ FUTURE — not addressed now.** SEC-4's app-level
   rate limiting is a per-actor **abuse/cost/fraud** control, NOT DDoS defense: the limiter runs *inside*
   Node (after TCP/TLS + parse + a Redis round-trip, then returns 429), so a flood still burns compute /

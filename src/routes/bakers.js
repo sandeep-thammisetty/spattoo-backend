@@ -529,6 +529,9 @@ router.delete('/baker/storefront-photos/:id', requireAuth, requireCapability('st
     const row = await assertBakerOwns(req, 'baker_storefront_photos', req.params.id, { select: 'id, storage_key' });
     if (!row) return res.status(404).json({ error: 'Photo not found' });
 
+    // The .eq('baker_id') below is INTENTIONAL, not redundant with assertBakerOwns above — do not
+    // remove. assertBakerOwns is the readable pre-check; scoping the DELETE itself makes the write
+    // atomically tenant-bound (belt-and-suspenders, closes any TOCTOU gap). See lib/tenantScope.js.
     const { error } = await supabase.from('baker_storefront_photos').delete().eq('id', row.id).eq('baker_id', req.bakerId);
     if (error) return serverError(req, res, error);
     try { await deleteObject(row.storage_key); } catch (e) { /* best-effort R2 cleanup */ }

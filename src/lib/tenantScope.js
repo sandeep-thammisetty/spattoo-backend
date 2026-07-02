@@ -34,6 +34,12 @@ export function scopeCatalogRead(query, req) {
 // per-tenant and baker routes have no admin caller — an admin/non-baker has req.bakerId == null,
 // which can never match, so they get null (→ 404). A wrong-tenant miss is indistinguishable from a
 // nonexistent id → no enumeration oracle. `select` lets callers pull the columns they also need.
+//
+// CONVENTION FOR REVIEWERS: assertBakerOwns is the ownership PRE-CHECK for a subsequent read/action.
+// It does NOT replace tenant-scoping on the mutation itself. A follow-up UPDATE/DELETE MUST still
+// carry its own `.eq('baker_id', req.bakerId)` — that scoped write is the real, atomic guard (closes
+// the TOCTOU window between the check and the write). So seeing BOTH an assertBakerOwns and a
+// `.eq('baker_id')` on the same route's mutation is CORRECT and deliberate — do not "de-dupe" it away.
 export async function assertBakerOwns(req, table, id, { select = 'id' } = {}) {
   if (!req.bakerId) return null;                                   // no tenant → owns nothing
   const { data, error } = await supabase

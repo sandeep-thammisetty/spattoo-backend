@@ -5,7 +5,8 @@
   source of truth; the live template lives in Supabase config (dashboard), not code.
 
   Subjects (set per slot in the dashboard):
-    baker    → "Confirm your email to get started with Spattoo"
+    baker    → "Verify your email for Spattoo"   (verification only — the WELCOME is a
+               separate app email sent AFTER confirmation, not this expiring OTP link)
     customer → "Your Spattoo sign-in code"
 
   Branches:
@@ -28,21 +29,20 @@
         </td></tr>
 
         {{ if eq .Data.role "baker" }}
-        <!-- ── Baker: email confirmation (signup activation) ───────────────────── -->
+        <!-- ── Baker: email VERIFICATION only (welcome is a separate post-confirm email) ── -->
         <tr><td style="padding:14px 36px 0;text-align:center;">
-          <h1 style="margin:0;font-size:22px;color:#2C4433;font-weight:800;">Welcome to Spattoo</h1>
+          <h1 style="margin:0;font-size:22px;color:#2C4433;font-weight:800;">Verify your email</h1>
         </td></tr>
-        <tr><td style="padding:18px 36px 0;color:#3C4A40;font-size:15px;line-height:1.6;">
-          <p style="margin:0 0 14px;">You're one click away from your own 3D cake designer and branded storefront.</p>
-          <p style="margin:0 0 14px;">Confirm your email to activate your account and get started.</p>
+        <tr><td style="padding:18px 36px 0;color:#3C4A40;font-size:15px;line-height:1.6;text-align:center;">
+          <p style="margin:0;">Confirm your email address to finish setting up your Spattoo account.</p>
         </td></tr>
-        <tr><td style="padding:26px 36px 8px;text-align:center;">
-          <a href="{{ .ConfirmationURL }}" style="display:inline-block;background:#2C4433;color:#ffffff;text-decoration:none;font-size:16px;font-weight:700;padding:14px 34px;border-radius:12px;">Confirm your email &rarr;</a>
+        <tr><td style="padding:24px 36px 8px;text-align:center;">
+          <a href="{{ .ConfirmationURL }}" style="display:inline-block;background:#2C4433;color:#ffffff;text-decoration:none;font-size:16px;font-weight:700;padding:14px 34px;border-radius:12px;">Verify email &rarr;</a>
         </td></tr>
-        <tr><td style="padding:14px 36px 4px;color:#55615A;font-size:14px;line-height:1.6;text-align:center;">
-          <p style="margin:0;">Once you're in, you'll set up your storefront, add your cakes, and start taking orders.</p>
+        <tr><td style="padding:12px 36px 4px;color:#9aa;font-size:12px;line-height:1.6;text-align:center;">
+          <p style="margin:0;">This link expires in 24 hours. If it does, you can request a new one from the sign-in screen.</p>
         </td></tr>
-        <tr><td style="padding:12px 36px 32px;text-align:center;color:#9aa;font-size:12px;line-height:1.6;">
+        <tr><td style="padding:8px 36px 32px;text-align:center;color:#9aa;font-size:12px;line-height:1.6;">
           <p style="margin:0 0 6px;">If the button doesn't work, copy and paste this link into your browser:<br/>
             <a href="{{ .ConfirmationURL }}" style="color:#2C4433;word-break:break-all;">{{ .ConfirmationURL }}</a></p>
           <p style="margin:0;">If you didn't create a Spattoo account, you can safely ignore this email.</p>

@@ -107,9 +107,11 @@ router.get('/billing/status', requireAuth, requireCapability('billing:manage'), 
     res.json({
       tier:                 sub.plan?.name           ?? null,
       status:               sub.status,
-      next_billing_at:      sub.end_date             ?? null,
+      // Prefer the timezone-correct instant; fall back to the legacy date until backfilled.
+      next_billing_at:      sub.current_period_end   ?? sub.end_date ?? null,
       billing_period:       sub.period?.display_name ?? null,
       cancel_at_period_end: sub.cancel_at_period_end ?? false,
+      cancellation_requested_at: sub.cancellation_requested_at ?? null,
     });
   } catch (err) {
     serverError(req, res, err);
@@ -251,9 +253,13 @@ router.post('/billing/cancel', requireAuth, requireCapability('billing:manage'),
 
     const current = await deriveSubscription(baker.id);
 
-    // Cancel at cycle end in Razorpay (keeps access until paid-through). AUTHORITATIVE:
-    // if Razorpay rejects it, we must NOT report success — otherwise the baker thinks
-    // they cancelled while Razorpay keeps charging. Surface the failure.
+    // Cancel IMMEDIATELY in Razorpay (atCycleEnd=false). Razorpay's cancel-at-cycle-end is
+    // invisible on the subscription entity until the boundary, which is impossible to verify;
+    // an immediate cancel flips Razorpay to `cancelled` synchronously (certain + auditable),
+    // and the baker's paid access is preserved locally as a GRACE period until
+    // current_period_end (see the DB update below + the get_baker_subscription derive rule).
+    // AUTHORITATIVE: if Razorpay rejects it we must NOT report success — otherwise the baker
+    // thinks they cancelled while Razorpay keeps charging. Surface the failure.
     //
     // FAIL CLOSED (mirrors /billing/subscribe's SEC-6): a baker with a
     // billing_subscription_id has a REAL Razorpay subscription that only Razorpay can
@@ -271,7 +277,7 @@ router.post('/billing/cancel', requireAuth, requireCapability('billing:manage'),
         });
       }
       try {
-        await razorpayCancelSubscription(baker.billing_subscription_id, true);
+        await razorpayCancelSubscription(baker.billing_subscription_id, false);
       } catch (err) {
         console.error('[billing] Razorpay cancel failed:', err.message);
         return res.status(502).json({
@@ -281,12 +287,15 @@ router.post('/billing/cancel', requireAuth, requireCapability('billing:manage'),
       }
     }
 
-    // Mark the CURRENT subscription row to end at period end — keep access (status stays
-    // active) until end_date; the subscription.cancelled webhook / daily expiry job flips
-    // it to cancelled at the cycle end. The billing UI reads cancel_at_period_end to show
-    // "won't renew" and hide the Cancel button. (baker_subscriptions is the source of
-    // truth; bakers.subscription_status_id is mirrored by the webhook at cycle end.)
-    const markQuery = supabase.from('baker_subscriptions').update({ cancel_at_period_end: true });
+    // Mark the CURRENT subscription row: keep access as a GRACE period (status stays active)
+    // until current_period_end, even though Razorpay is already cancelled. cancellation_requested_at
+    // records that the cancel was issued (audit + confirmation). The daily reconcile job relabels
+    // the row to cancelled once current_period_end passes; access is correct before then via the
+    // derive rule (now() < current_period_end). The billing UI reads cancel_at_period_end to show
+    // "won't renew" and hide the Cancel button. NOTE: we do NOT touch end_date/current_period_end
+    // here — the paid-through boundary is preserved.
+    const markQuery = supabase.from('baker_subscriptions')
+      .update({ cancel_at_period_end: true, cancellation_requested_at: new Date().toISOString() });
     const { error: markErr } = baker.billing_subscription_id
       ? await markQuery.eq('billing_subscription_id', baker.billing_subscription_id)
       : await markQuery.eq('baker_id', baker.id).eq('status_id', SUBSCRIPTION_STATUS.ACTIVE);
@@ -418,7 +427,7 @@ router.post('/billing/webhook', async (req, res) => {
     // — NOT "the baker's most-recent non-cancelled row", which let a late event for a
     // superseded sub mutate the wrong (current) row.
     const { data: subRow, error: subLookupErr } = await supabase
-      .from('baker_subscriptions').select('id, baker_id, plan_id')
+      .from('baker_subscriptions').select('id, baker_id, plan_id, current_period_end')
       .eq('billing_subscription_id', razorpaySubId).maybeSingle();
     if (subLookupErr) throw new Error(`sub lookup failed: ${subLookupErr.message}`);
     if (!subRow) return res.json({ ok: true });
@@ -444,26 +453,50 @@ router.post('/billing/webhook', async (req, res) => {
 
     const newStatusId = STATUS_MAP[event];
     if (newStatusId !== undefined) {
-      const today = new Date().toISOString().slice(0, 10);
+      const nowMs = Date.now();
       const subUpdate = { status_id: newStatusId };
-      if ([SUBSCRIPTION_STATUS.CANCELLED, SUBSCRIPTION_STATUS.PAUSED].includes(newStatusId)) {
-        subUpdate.end_date = today;
+
+      // On a successful (re)charge, stamp the authoritative paid-through boundary from Razorpay
+      // as an INSTANT (timezone-correct — the source of truth for access). Also advance the
+      // legacy end_date (kept for display until the frontend reads current_period_end directly).
+      // This is also the recovery path: a halted/expired (non-cancelled) row reactivates here →
+      // status active + boundary forward, on the SAME row.
+      if (event === 'subscription.charged') {
+        if (sub?.current_start) subUpdate.current_period_start = new Date(sub.current_start * 1000).toISOString();
+        if (sub?.current_end) {
+          subUpdate.current_period_end = new Date(sub.current_end * 1000).toISOString();
+          subUpdate.end_date           = new Date(sub.current_end * 1000).toISOString().slice(0, 10);
+        }
       }
-      // On a successful (re)charge, advance the paid-through date to Razorpay's
-      // current cycle end — otherwise a RENEWED sub still has last cycle's end_date
-      // and derives as 'expired'. This is also the recovery path: a halted/expired
-      // row (still non-cancelled) is reactivated here → status active + end_date
-      // forward, on the SAME row.
-      if (event === 'subscription.charged' && sub?.current_end) {
-        subUpdate.end_date = new Date(sub.current_end * 1000).toISOString().slice(0, 10);
+
+      // Cancellation grace-guard. We cancel Razorpay IMMEDIATELY, so subscription.cancelled fires
+      // right away — do NOT end access mid-cycle. While still within the paid-through boundary,
+      // preserve access (leave status active) and just flag "won't renew" (also covers a cancel
+      // initiated from the Razorpay dashboard). Access flips off via the derive rule at the
+      // boundary; the daily reconcile job relabels the row to cancelled. Only relabel here if the
+      // boundary is already past or unknown.
+      if (newStatusId === SUBSCRIPTION_STATUS.CANCELLED) {   // subscription.cancelled / .completed
+        const graceEndMs = subRow.current_period_end ? new Date(subRow.current_period_end).getTime() : null;
+        if (graceEndMs && graceEndMs > nowMs) {
+          delete subUpdate.status_id;                        // within grace → keep access
+          subUpdate.cancel_at_period_end = true;             // reflect "won't renew"
+        } else if (!subRow.current_period_end) {
+          subUpdate.end_date = new Date(nowMs).toISOString().slice(0, 10);  // no known boundary → end now (legacy)
+        }
+      } else if (newStatusId === SUBSCRIPTION_STATUS.PAUSED) {
+        subUpdate.end_date = new Date(nowMs).toISOString().slice(0, 10);    // pause flow, unchanged
       }
+
       // Error-checked: a failed write throws → 500 → Razorpay retries (no silent loss).
-      const { error: subUpdErr } = await supabase
-        .from('baker_subscriptions').update(subUpdate).eq('id', subRow.id);
-      if (subUpdErr) throw new Error(`baker_subscriptions update failed: ${subUpdErr.message}`);
-      if (isCurrent) {
+      if (Object.keys(subUpdate).length > 0) {
+        const { error: subUpdErr } = await supabase
+          .from('baker_subscriptions').update(subUpdate).eq('id', subRow.id);
+        if (subUpdErr) throw new Error(`baker_subscriptions update failed: ${subUpdErr.message}`);
+      }
+      // Mirror status onto bakers only when we actually changed status AND this is the current sub.
+      if (isCurrent && subUpdate.status_id !== undefined) {
         const { error: bakerUpdErr } = await supabase.from('bakers')
-          .update({ subscription_status_id: newStatusId }).eq('id', bakerId);
+          .update({ subscription_status_id: subUpdate.status_id }).eq('id', bakerId);
         if (bakerUpdErr) throw new Error(`bakers status update failed: ${bakerUpdErr.message}`);
       }
     }

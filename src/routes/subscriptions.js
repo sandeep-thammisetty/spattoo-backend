@@ -49,6 +49,11 @@ export async function deriveSubscription(bakerId) {
     end_date:   row.end_date,
     start_date: row.start_date,
     cancel_at_period_end: row.cancel_at_period_end ?? false,
+    // Instant boundaries (authoritative for access) + cancellation audit. current_period_end
+    // is the paid-through instant; access is granted while now() < current_period_end.
+    current_period_start:      row.current_period_start      ?? null,
+    current_period_end:        row.current_period_end        ?? null,
+    cancellation_requested_at: row.cancellation_requested_at ?? null,
   };
 }
 

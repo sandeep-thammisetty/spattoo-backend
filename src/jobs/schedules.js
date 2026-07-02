@@ -1,0 +1,16 @@
+import { jobQueue } from './queue.js';
+import { config } from '../config.js';
+
+// Register repeatable (cron) job schedulers in Redis. Idempotent via upsert — safe to call on every
+// boot and from every instance: BullMQ dedupes on the scheduler id, so each scheduled tick produces
+// exactly ONE job regardless of how many API instances are running (no per-instance duplication, no
+// drift across restarts — the schedule lives in Redis, not process memory). The jobs are executed by
+// the worker's processors map (jobs/worker.js).
+export async function registerJobSchedulers() {
+  await jobQueue.upsertJobScheduler(
+    'reconcile-subscriptions',
+    { pattern: config.jobs.reconcileCron, tz: 'UTC' },
+    { name: 'reconcile_subscriptions', opts: { removeOnComplete: true, removeOnFail: 100 } },
+  );
+  console.log(`Job schedulers registered (reconcile_subscriptions: "${config.jobs.reconcileCron}" UTC)`);
+}

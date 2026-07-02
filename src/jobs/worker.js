@@ -5,13 +5,15 @@ import { autoTag } from './processors/autoTag.js';
 import { sendNotification } from './processors/sendNotification.js';
 import { removeLogoBg } from './processors/removeLogoBg.js';
 import { optimizePhoto } from './processors/optimizePhoto.js';
+import { reconcileSubscriptions } from './processors/reconcileSubscriptions.js';
 
 const processors = {
-  extract_image:     extractImage,
-  auto_tag:          autoTag,
-  send_notification: sendNotification,
-  remove_logo_bg:    removeLogoBg,
-  optimize_photo:    optimizePhoto,
+  extract_image:           extractImage,
+  auto_tag:                autoTag,
+  send_notification:       sendNotification,
+  remove_logo_bg:          removeLogoBg,
+  optimize_photo:          optimizePhoto,
+  reconcile_subscriptions: reconcileSubscriptions,
 };
 
 export function startWorker() {

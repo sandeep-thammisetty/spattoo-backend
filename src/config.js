@@ -31,6 +31,11 @@ export const config = {
   // pointing at `https://<api-host>/api/webhooks/meshy`.
   meshy:    { apiKey: process.env.MESHY_API_KEY },
   redis:    { url:    process.env.REDIS_URL },
+  // Background job schedules (BullMQ repeatable, cron in UTC). Retime per-env from the Render
+  // dashboard without a deploy. Consistent with the UTC convention (see DATETIME_CONVENTIONS).
+  jobs: {
+    reconcileCron: process.env.RECONCILE_CRON || '0 3 * * *',   // 03:00 UTC daily
+  },
   r2: {
     endpoint:        process.env.R2_ENDPOINT,
     accessKeyId:     process.env.R2_ACCESS_KEY_ID,

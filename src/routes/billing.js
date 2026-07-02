@@ -254,7 +254,22 @@ router.post('/billing/cancel', requireAuth, requireCapability('billing:manage'),
     // Cancel at cycle end in Razorpay (keeps access until paid-through). AUTHORITATIVE:
     // if Razorpay rejects it, we must NOT report success — otherwise the baker thinks
     // they cancelled while Razorpay keeps charging. Surface the failure.
-    if (razorpayEnabled() && baker.billing_subscription_id) {
+    //
+    // FAIL CLOSED (mirrors /billing/subscribe's SEC-6): a baker with a
+    // billing_subscription_id has a REAL Razorpay subscription that only Razorpay can
+    // stop. If the keys are missing/rotated out, razorpayEnabled() is false and we CANNOT
+    // honour the cancel — flipping cancel_at_period_end anyway (the old behaviour) told the
+    // baker they'd cancelled while Razorpay kept billing them. Refuse instead of lying.
+    // (Bakers WITHOUT a billing_subscription_id — free/spark/dev rows that never created a
+    // Razorpay sub — need no provider call and fall straight through to the DB update.)
+    if (baker.billing_subscription_id) {
+      if (!razorpayEnabled()) {
+        console.error('[billing] cancel blocked: baker has a Razorpay subscription but Razorpay is not configured — refusing to report a cancel we cannot send to the provider');
+        return res.status(503).json({
+          error: 'Billing is temporarily unavailable. Please try again shortly.',
+          code:  'razorpay_unavailable',
+        });
+      }
       try {
         await razorpayCancelSubscription(baker.billing_subscription_id, true);
       } catch (err) {

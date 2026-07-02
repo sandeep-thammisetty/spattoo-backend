@@ -212,6 +212,17 @@ async function notifySubscription(typeSlug, baker, payload) {
   });
 }
 
+// Welcome a NEW baker after their bakery is created (post-confirmation onboarding kit). Recipient
+// is the owner's email (bakers.email is optional at creation). Fired from createBakerForUser.
+export async function notifyBakerWelcome({ email, firstName, bakerName, slug }) {
+  if (!email) return;
+  await insertNotification('baker_welcome', email, {
+    firstName: firstName ?? null,
+    bakerName: bakerName ?? null,
+    slug:      slug      ?? null,   // template builds the storefront URL from this
+  });
+}
+
 export const notifySubscriptionActivated = (baker, p) => notifySubscription('subscription_activated', baker, p);
 export const notifySubscriptionRenewed   = (baker, p) => notifySubscription('subscription_renewed',   baker, p);
 export const notifyPaymentFailed         = (baker, p) => notifySubscription('payment_failed',          baker, p);

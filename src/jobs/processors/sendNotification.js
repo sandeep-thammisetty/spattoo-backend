@@ -303,6 +303,30 @@ function buildEmail(typeSlug, recipientEmail, payload) {
     };
   }
 
+  // ── Baker welcome (post-confirmation onboarding kit) ────────────────────────
+  if (typeSlug === 'baker_welcome') {
+    const who          = esc(p.firstName || p.bakerName || 'there');
+    const storefront   = p.slug ? config.storefront.urlTemplate.replace('{slug}', p.slug) : null;
+    const storefrontLc = storefront ? storefront.replace(/^https?:\/\//, '') : null;
+    const dashUrl      = config.app.url ? config.app.url.replace(/\/+$/, '') : null;
+    return {
+      from: config.smtp.from, to: recipientEmail,
+      subject: `Welcome to Spattoo${p.bakerName ? `, ${esc(p.bakerName)}` : ''}!`,
+      html: `<div style="font-family:sans-serif;max-width:560px;margin:0 auto;color:#333">
+        <h2 style="color:#2C4433">Welcome to Spattoo, ${who}!</h2>
+        <p>Your account is ready. Here's how to get your bakery live and taking orders:</p>
+        <ol style="padding-left:18px;line-height:1.9;color:#333">
+          <li>Add your branding — logo &amp; colours</li>
+          <li>Add your first cake template or element</li>
+          <li>Publish your storefront${storefrontLc ? ` at <b>${esc(storefrontLc)}</b>` : ''}</li>
+          <li>Invite your first customer to design a cake</li>
+        </ol>
+        ${dashUrl ? `<p style="margin-top:20px"><a href="${escUrl(dashUrl)}" style="display:inline-block;background:#2C4433;color:#fff;text-decoration:none;padding:12px 28px;border-radius:10px;font-weight:700">Open your dashboard</a></p>` : ''}
+        <p style="color:#888;font-size:12px;margin-top:24px">Spattoo — the 3D cake designer for bakeries</p>
+      </div>`,
+    };
+  }
+
   // ── Subscription lifecycle (baker-facing, Spattoo-branded) ──────────────────
   // from = Spattoo (config.smtp.from) — these are platform→baker, not baker-branded.
   const plan       = titleCase(p.planName) || 'your';

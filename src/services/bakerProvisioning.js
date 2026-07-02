@@ -2,6 +2,7 @@ import { supabase } from './supabase.js';
 import { normalizeWebUrl } from '../lib/safeUrl.js';
 import { logSubscriptionEvent } from '../routes/subscriptions.js';
 import { enqueueLogoBgRemoval } from '../jobs/processors/removeLogoBg.js';
+import { notifyBakerWelcome }   from './notifications.js';
 import { getSparkTrialDays }    from './entitlements.js';
 import { PLAN }                from '../constants/subscriptionPlans.js';
 import { PERIOD }              from '../constants/billingPeriods.js';
@@ -218,6 +219,12 @@ export async function createBakerForUser({
 
   // If the baker was created with a logo, generate its background-removed version async.
   if (logo_url) enqueueLogoBgRemoval(data.id, logo_url);
+
+  // Welcome the new baker (post-confirmation onboarding kit). Fires exactly once — the idempotent
+  // guard above returns early for an existing baker. Fire-and-forget + best-effort: a mail hiccup
+  // must never fail provisioning. Recipient is the owner's email (bakers.email may be unset here).
+  notifyBakerWelcome({ email: primaryUser.email, firstName: primaryUser.first_name, bakerName: name, slug })
+    .catch(err => console.error('[bakers] welcome email failed:', err.message));
 
   return { id: data.id };
 }
